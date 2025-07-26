@@ -1,13 +1,24 @@
 package client
 
 import (
-	"fmt"
+	"encoding/json"
+	"log"
 )
 
-func TransfersHandler(msg []byte) {
-	fmt.Println("🔄 [Transfers] Message:", string(msg))
+func NewTokenHandler(msg []byte) {
+	var result map[string]interface{}
+	if err := json.Unmarshal(msg, &result); err != nil {
+		log.Printf("NewTokenHandler JSON error: %v", err)
+		return
+	}
+	log.Printf("[NewToken Created] %v", result)
 }
 
-func DexTradesHandler(msg []byte) {
-	fmt.Println("📈 [DexTrades] Message:", string(msg))
+func TokenTradeHandler(msg []byte) {
+	var result map[string]interface{}
+	if err := json.Unmarshal(msg, &result); err != nil {
+		log.Printf("TokenTradeHandler JSON error: %v", err)
+		return
+	}
+	log.Printf("[TokenTraded] %v", result)
 }

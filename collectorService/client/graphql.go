@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -154,7 +155,7 @@ type SubscriptionMessage struct {
 	Payload Payload `json:"payload"`
 }
 
-func (c *Client) Subscribe(query string, handler func([]byte)) (string, error) {
+func (c *Client) Subscribe(query string, handler func([]byte), done <-chan struct{}) (string, error) {
 	id := generateID()
 
 	msg := SubscriptionMessage{
@@ -173,44 +174,37 @@ func (c *Client) Subscribe(query string, handler func([]byte)) (string, error) {
 
 	go func() {
 		for {
-			_, msg, err := c.conn.ReadMessage()
-			if err != nil {
-				log.Printf("WebSocket read error: %v", err)
+			select {
+			case <-done:
+				log.Printf("Subscribe done: %s", id)
 				return
-			}
-			// var resp map[string]interface{}
-			// if err := json.Unmarshal(msg, &resp); err != nil {
-			// 	log.Printf("JSON unmarshal error: %v", err)
-			// 	continue
-			// }
+			default:
+				_, rawMsg, err := c.conn.ReadMessage()
+				if err != nil {
+					log.Printf("WebSocket read error: %v", err)
+					return
+				}
+				var resp map[string]interface{}
+				if err := json.Unmarshal(rawMsg, &resp); err != nil {
+					log.Printf("JSON unmarshal error: %v", err)
+					continue
+				}
+				// transfer data packet to handler
+				if resp["type"] == "next" {
+					payloadMap, ok := resp["payload"].(map[string]interface{})
+					if !ok {
+						log.Println("payload is not a map")
+						return
+					}
 
-			log.Printf("WebSocket Message : %s", msg)
-			// switch resp["type"] {
-			// case "connection_ack":
-			// 	// 2. start subscription
-			// 	startMsg := map[string]interface{}{
-			// 		"type":    "start",
-			// 		"id":      id,
-			// 		"payload": map[string]interface{}{"query": query},
-			// 	}
-			// 	c.mu.Lock()
-			// 	err := c.conn.WriteJSON(startMsg)
-			// 	c.mu.Unlock()
-			// 	if err != nil {
-			// 		log.Printf("WebSocket write error: %v", err)
-			// 		return
-			// 	}
-			// case "data":
-			// 	if resp["id"] == id {
-			// 		payload, _ := json.Marshal(resp["payload"])
-			// 		handler(payload)
-			// 	}
-			// case "error", "connection_error":
-			// 	log.Printf("WebSocket error: %v", resp["payload"])
-			// case "complete", "close":
-			// 	log.Printf("WebSocket closed")
-			// 	return
-			// }
+					dataBytes, err := json.Marshal(payloadMap["data"])
+					if err != nil {
+						log.Printf("Failed to marshal data: %v", err)
+						return
+					}
+					handler(dataBytes)
+				}
+			}
 		}
 	}()
 	return id, nil
