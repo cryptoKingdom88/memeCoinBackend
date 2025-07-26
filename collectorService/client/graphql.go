@@ -2,8 +2,13 @@ package client
 
 import (
 	"bufio"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"sync"
@@ -32,12 +37,48 @@ type InitMessage struct {
 func Connect(apiKey string) (*Client, error) {
 	header := map[string][]string{
 		"Sec-WebSocket-Protocol": {"graphql-transport-ws"},
+		"Connection":             {"Upgrade"},
+		"Upgrade":                {"websocket"},
+		"Origin":                 {"https://ide.bitquery.io"},
 	}
-	dialer := websocket.DefaultDialer
-	conn, _, err := dialer.Dial("wss://streaming.bitquery.io/eap?token="+apiKey, header)
+
+	caCert, _ := ioutil.ReadFile("/Volumes/Resource/Temp/http.crt")
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+
+	tlsConfig := &tls.Config{
+		RootCAs: caCertPool,
+	}
+
+	// HTTP Transport 설정 (프록시 + TLS)
+	proxyURL, _ := url.Parse("http://127.0.0.1:8000")
+	dialer := websocket.Dialer{
+		Proxy:           http.ProxyURL(proxyURL),
+		TLSClientConfig: tlsConfig,
+	}
+
+	u := url.URL{Scheme: "wss", Host: "streaming.bitquery.io", Path: "/eap?token=" + apiKey}
+
+	conn, resp, err := dialer.Dial(u.String(), header)
 	if err != nil {
-		return nil, err
+		if resp != nil && resp.Body != nil {
+			body, _ := ioutil.ReadAll(resp.Body)
+			log.Printf("WebSocket Dial error: %v", err)
+			log.Printf("Response Status: %s", resp.Status)
+			log.Printf("Response Headers: %+v", resp.Header)
+			log.Printf("Response Body: %s", body)
+		} else {
+			log.Printf("WebSocket Dial failed: %v (no response received)", err)
+		}
+
+		panic(err)
 	}
+
+	//dialer := websocket.DefaultDialer
+	// conn, _, err := dialer.Dial("wss://streaming.bitquery.io/eap?token="+apiKey, header)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	// authorize
 	msg := InitMessage{
