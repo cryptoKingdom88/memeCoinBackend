@@ -12,24 +12,30 @@ func main() {
 	cfg := config.LoadConfig()
 	log.Println("Load configuration is completed.")
 
-	conn, err := client.Connect(cfg.BitqueryAPIKey)
+	connNewToken, err := client.Connect(cfg.BitqueryAPIKey)
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
 
-	// 쿼리 파일에서 로드
+	// Load from Query file
 	newTokenQuery, err := client.LoadQuery("client/query/newToken.graphql")
 	if err != nil {
 		log.Fatalf("Failed to load transfers query: %v", err)
 	}
-	// tokenTradeQuery, err := client.LoadQuery("client/query/tokenTrade.graphql")
-	// if err != nil {
-	// 	log.Fatalf("Failed to load dexTrades query: %v", err)
-	// }
 
-	// 각각의 구독 시작
-	conn.Subscribe(newTokenQuery, client.TransfersHandler)
-	// conn.Subscribe(tokenTradeQuery, client.DexTradesHandler)
+	// Start to subscribe
+	connNewToken.Subscribe(newTokenQuery, client.TransfersHandler)
+
+	connTokenTrade, err := client.Connect(cfg.BitqueryAPIKey)
+	if err != nil {
+		log.Fatalf("Failed to connect: %v", err)
+	}
+
+	tokenTradeQuery, err := client.LoadQuery("client/query/tokenTrade.graphql")
+	if err != nil {
+		log.Fatalf("Failed to load dexTrades query: %v", err)
+	}
+	connTokenTrade.Subscribe(tokenTradeQuery, client.DexTradesHandler)
 	// id1, err := conn.Subscribe(newTokenQuery, client.TransfersHandler)
 	// if err != nil {
 	// 	log.Fatalf("Subscribe transfers error: %v", err)
@@ -39,12 +45,12 @@ func main() {
 	// 	log.Fatalf("Subscribe dexTrades error: %v", err)
 	// }
 
-	// 종료 시점에 unsubscribe
 	// defer conn.Unsubscribe(id1)
 	// defer conn.Unsubscribe(id2)
-	defer conn.Close()
+	defer connNewToken.Close()
+	defer connTokenTrade.Close()
 
-	// 무한 대기 루프
+	// Infinite loop
 	for {
 		time.Sleep(10 * time.Second)
 	}

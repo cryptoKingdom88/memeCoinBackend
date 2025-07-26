@@ -34,30 +34,48 @@ type InitMessage struct {
 	Payload InitPayload `json:"payload"`
 }
 
+func getWebSocketDialer(proxyMode bool) *websocket.Dialer {
+	if proxyMode {
+		caCert, err := ioutil.ReadFile("/Volumes/Resource/Temp/http.crt")
+		if err != nil {
+			panic("CA Certificate Load Failed: " + err.Error())
+		}
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+
+		tlsConfig := &tls.Config{
+			RootCAs: caCertPool,
+		}
+
+		proxyURL, err := url.Parse("http://127.0.0.1:8000")
+		if err != nil {
+			panic("Proxy URL Parsing Failed: " + err.Error())
+		}
+
+		return &websocket.Dialer{
+			Proxy:           http.ProxyURL(proxyURL),
+			TLSClientConfig: tlsConfig,
+		}
+	}
+
+	// if proxyMode is false, use default Dialer
+	return websocket.DefaultDialer
+}
+
 func Connect(apiKey string) (*Client, error) {
 	header := map[string][]string{
 		"Sec-WebSocket-Protocol": {"graphql-transport-ws"},
-		"Connection":             {"Upgrade"},
-		"Upgrade":                {"websocket"},
-		"Origin":                 {"https://ide.bitquery.io"},
+		"Accept-Encoding":        {"gzip"},
 	}
 
-	caCert, _ := ioutil.ReadFile("/Volumes/Resource/Temp/http.crt")
-	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(caCert)
+	dialer := getWebSocketDialer(true)
 
-	tlsConfig := &tls.Config{
-		RootCAs: caCertPool,
+	u := url.URL{
+		Scheme:   "wss",
+		Host:     "streaming.bitquery.io",
+		Path:     "/eap",
+		RawQuery: "token=" + apiKey,
 	}
-
-	// HTTP Transport 설정 (프록시 + TLS)
-	proxyURL, _ := url.Parse("http://127.0.0.1:8000")
-	dialer := websocket.Dialer{
-		Proxy:           http.ProxyURL(proxyURL),
-		TLSClientConfig: tlsConfig,
-	}
-
-	u := url.URL{Scheme: "wss", Host: "streaming.bitquery.io", Path: "/eap?token=" + apiKey}
 
 	conn, resp, err := dialer.Dial(u.String(), header)
 	if err != nil {
@@ -97,13 +115,12 @@ func Connect(apiKey string) (*Client, error) {
 	}
 
 	// wait connection_ack
-	_, msgAck, err := conn.ReadMessage()
+	_, _, err = conn.ReadMessage()
 	if err != nil {
 		log.Printf("WebSocket read error: %v", err)
 		conn.Close()
 		return nil, err
 	}
-	log.Println("WebSocket Connection_ACK : %s", msgAck)
 
 	return &Client{conn: conn}, nil
 }
@@ -149,9 +166,7 @@ func (c *Client) Subscribe(query string, handler func([]byte)) (string, error) {
 		},
 	}
 
-	c.mu.Lock()
 	err := c.conn.WriteJSON(msg)
-	c.mu.Unlock()
 	if err != nil {
 		return "", err
 	}
@@ -206,8 +221,6 @@ func (c *Client) Unsubscribe(id string) error {
 		"id":   id,
 		"type": "stop",
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	return c.conn.WriteJSON(unsubMsg)
 }
 
@@ -215,7 +228,6 @@ func PrintHandler(msg []byte) {
 	log.Printf("Received: %s", string(msg))
 }
 
-// 간단한 ID 생성기
 var idSeq = 0
 
 func generateID() string {

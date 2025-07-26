@@ -5,9 +5,9 @@ import (
 )
 
 func TransfersHandler(msg []byte) {
-	fmt.Println("🔄 [Transfers] 메시지:", string(msg))
+	fmt.Println("🔄 [Transfers] Message:", string(msg))
 }
 
 func DexTradesHandler(msg []byte) {
-	fmt.Println("📈 [DexTrades] 메시지:", string(msg))
+	fmt.Println("📈 [DexTrades] Message:", string(msg))
 }

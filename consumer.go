@@ -15,13 +15,13 @@ func main() {
 		Topic:     "new-token-events",
 		GroupID:   "db-manage-group",
 		Partition: 0,
-		MinBytes:  1, // 10KB
+		MinBytes:  1,    // 10KB
 		MaxBytes:  10e6, // 10MB
 	})
 
 	defer reader.Close()
 
-	fmt.Println("Kafka Consumer 시작...")
+	fmt.Println("Kafka Consumer Start...")
 
 	for {
 		msg, err := reader.ReadMessage(context.Background())
