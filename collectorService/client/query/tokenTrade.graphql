@@ -1,39 +1,56 @@
-subscription {
+subscription MyQuery {
   Solana {
-    TokenSupplyUpdates(
-      where: {Instruction: {Program: {Address: {is: "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"}, Method: {is: "create"}}}}
+    DEXTrades(
+      where: {Trade: {Dex: {ProtocolName: {is: "pump"}}}, Transaction: {Result: {Success: true}}}
     ) {
-      Block {
-        Time
+      Instruction {
+        Program {
+          Method
+        }
       }
-      Transaction {
-        Signer
-      }
-      TokenSupplyUpdate {
-        Amount
-        Currency {
-          Symbol
-          ProgramAddress
-          PrimarySaleHappened
-          Native
-          Name
-          MintAddress
-          MetadataAddress
-          Key
-          IsMutable
-          Fungible
-          EditionNonce
-          Decimals
-          Wrapped
-          VerifiedCollection
-          Uri
-          UpdateAuthority
-          TokenStandard
-          TokenCreator {
+      Trade {
+        Dex {
+          ProtocolFamily
+          ProtocolName
+        }
+        Buy {
+          Amount
+          AmountInUSD
+          Account {
             Address
+            Owner
+          }
+          Currency {
+            Name
+            Symbol
+            MintAddress
+            Decimals
+            Fungible
+            Uri
           }
         }
-        PostBalance
+        Sell {
+          Amount
+          AmountInUSD
+          Account {
+            Address
+            Owner
+          }
+          Currency {
+            Name
+            Symbol
+            MintAddress
+            Decimals
+            Fungible
+            Uri
+          }
+        }
+      }
+      Transaction {
+        Signature
+      }
+      Block {
+        Time
       }
     }
   }

@@ -22,24 +22,27 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load transfers query: %v", err)
 	}
-	tokenTradeQuery, err := client.LoadQuery("client/query/tokenTrade.graphql")
-	if err != nil {
-		log.Fatalf("Failed to load dexTrades query: %v", err)
-	}
+	// tokenTradeQuery, err := client.LoadQuery("client/query/tokenTrade.graphql")
+	// if err != nil {
+	// 	log.Fatalf("Failed to load dexTrades query: %v", err)
+	// }
 
 	// 각각의 구독 시작
-	id1, err := conn.Subscribe(newTokenQuery, client.TransfersHandler)
-	if err != nil {
-		log.Fatalf("Subscribe transfers error: %v", err)
-	}
-	id2, err := conn.Subscribe(tokenTradeQuery, client.DexTradesHandler)
-	if err != nil {
-		log.Fatalf("Subscribe dexTrades error: %v", err)
-	}
+	conn.Subscribe(newTokenQuery, client.TransfersHandler)
+	// conn.Subscribe(tokenTradeQuery, client.DexTradesHandler)
+	// id1, err := conn.Subscribe(newTokenQuery, client.TransfersHandler)
+	// if err != nil {
+	// 	log.Fatalf("Subscribe transfers error: %v", err)
+	// }
+	// id2, err := conn.Subscribe(tokenTradeQuery, client.DexTradesHandler)
+	// if err != nil {
+	// 	log.Fatalf("Subscribe dexTrades error: %v", err)
+	// }
 
 	// 종료 시점에 unsubscribe
-	defer conn.Unsubscribe(id1)
-	defer conn.Unsubscribe(id2)
+	// defer conn.Unsubscribe(id1)
+	// defer conn.Unsubscribe(id2)
+	defer conn.Close()
 
 	// 무한 대기 루프
 	for {

@@ -2,9 +2,10 @@ package client
 
 import (
 	"bufio"
-	"encoding/json"
+	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -13,6 +14,19 @@ import (
 type Client struct {
 	conn *websocket.Conn
 	mu   sync.Mutex
+}
+
+type InitHeaders struct {
+	Authorization string `json:"Authorization"`
+}
+
+type InitPayload struct {
+	Headers InitHeaders `json:"headers"`
+}
+
+type InitMessage struct {
+	Type    string      `json:"type"`
+	Payload InitPayload `json:"payload"`
 }
 
 func Connect(apiKey string) (*Client, error) {
@@ -24,7 +38,37 @@ func Connect(apiKey string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// authorize
+	msg := InitMessage{
+		Type: "connection_init",
+		Payload: InitPayload{
+			Headers: InitHeaders{
+				Authorization: fmt.Sprintf("Bearer %s", apiKey),
+			},
+		},
+	}
+	err = conn.WriteJSON(msg)
+	if err != nil {
+		log.Println("Write error:", err)
+		conn.Close()
+		return nil, err
+	}
+
+	// wait connection_ack
+	_, msgAck, err := conn.ReadMessage()
+	if err != nil {
+		log.Printf("WebSocket read error: %v", err)
+		conn.Close()
+		return nil, err
+	}
+	log.Println("WebSocket Connection_ACK : %s", msgAck)
+
 	return &Client{conn: conn}, nil
+}
+
+func (c *Client) Close() {
+	c.conn.Close()
 }
 
 func LoadQuery(path string) (string, error) {
@@ -41,15 +85,31 @@ func LoadQuery(path string) (string, error) {
 	return query, scanner.Err()
 }
 
+type Payload struct {
+	Query     string                 `json:"query"`
+	Variables map[string]interface{} `json:"variables"`
+}
+
+type SubscriptionMessage struct {
+	ID      string  `json:"id"`
+	Type    string  `json:"type"`
+	Payload Payload `json:"payload"`
+}
+
 func (c *Client) Subscribe(query string, handler func([]byte)) (string, error) {
 	id := generateID()
 
-	// 1. connection_init
-	initMsg := map[string]interface{}{
-		"type": "connection_ack",
+	msg := SubscriptionMessage{
+		ID:   generateID(),
+		Type: "subscribe",
+		Payload: Payload{
+			Query:     query,
+			Variables: map[string]interface{}{},
+		},
 	}
+
 	c.mu.Lock()
-	err := c.conn.WriteJSON(initMsg)
+	err := c.conn.WriteJSON(msg)
 	c.mu.Unlock()
 	if err != nil {
 		return "", err
@@ -62,39 +122,39 @@ func (c *Client) Subscribe(query string, handler func([]byte)) (string, error) {
 				log.Printf("WebSocket read error: %v", err)
 				return
 			}
-			var resp map[string]interface{}
-			if err := json.Unmarshal(msg, &resp); err != nil {
-				log.Printf("JSON unmarshal error: %v", err)
-				continue
-			}
+			// var resp map[string]interface{}
+			// if err := json.Unmarshal(msg, &resp); err != nil {
+			// 	log.Printf("JSON unmarshal error: %v", err)
+			// 	continue
+			// }
 
 			log.Printf("WebSocket Message : %s", msg)
-			switch resp["type"] {
-			case "connection_ack":
-				// 2. start subscription
-				startMsg := map[string]interface{}{
-					"type":    "start",
-					"id":      id,
-					"payload": map[string]interface{}{"query": query},
-				}
-				c.mu.Lock()
-				err := c.conn.WriteJSON(startMsg)
-				c.mu.Unlock()
-				if err != nil {
-					log.Printf("WebSocket write error: %v", err)
-					return
-				}
-			case "data":
-				if resp["id"] == id {
-					payload, _ := json.Marshal(resp["payload"])
-					handler(payload)
-				}
-			case "error", "connection_error":
-				log.Printf("WebSocket error: %v", resp["payload"])
-			case "complete", "close":
-				log.Printf("WebSocket closed")
-				return
-			}
+			// switch resp["type"] {
+			// case "connection_ack":
+			// 	// 2. start subscription
+			// 	startMsg := map[string]interface{}{
+			// 		"type":    "start",
+			// 		"id":      id,
+			// 		"payload": map[string]interface{}{"query": query},
+			// 	}
+			// 	c.mu.Lock()
+			// 	err := c.conn.WriteJSON(startMsg)
+			// 	c.mu.Unlock()
+			// 	if err != nil {
+			// 		log.Printf("WebSocket write error: %v", err)
+			// 		return
+			// 	}
+			// case "data":
+			// 	if resp["id"] == id {
+			// 		payload, _ := json.Marshal(resp["payload"])
+			// 		handler(payload)
+			// 	}
+			// case "error", "connection_error":
+			// 	log.Printf("WebSocket error: %v", resp["payload"])
+			// case "complete", "close":
+			// 	log.Printf("WebSocket closed")
+			// 	return
+			// }
 		}
 	}()
 	return id, nil
@@ -119,5 +179,5 @@ var idSeq = 0
 
 func generateID() string {
 	idSeq++
-	return "sub" + string(idSeq)
+	return "sub" + strconv.Itoa(idSeq)
 }
