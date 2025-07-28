@@ -2,7 +2,9 @@ package main
 
 import (
 	"log"
-	"time"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/cryptoKingdom88/memeCoinBackend/collectorService/client"
 	"github.com/cryptoKingdom88/memeCoinBackend/collectorService/config"
@@ -12,12 +14,16 @@ func main() {
 	cfg := config.LoadConfig()
 	log.Println("Load configuration is completed.")
 
-	conn, err := client.Connect(cfg.BitqueryAPIKey)
+	connNewToken, err := client.Connect(cfg.BitqueryAPIKey)
+	if err != nil {
+		log.Fatalf("Failed to connect: %v", err)
+	}
+	connTokenTrade, err := client.Connect(cfg.BitqueryAPIKey)
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
 
-	// 쿼리 파일에서 로드
+	// Load from Query file
 	newTokenQuery, err := client.LoadQuery("client/query/newToken.graphql")
 	if err != nil {
 		log.Fatalf("Failed to load transfers query: %v", err)
@@ -27,22 +33,41 @@ func main() {
 		log.Fatalf("Failed to load dexTrades query: %v", err)
 	}
 
-	// 각각의 구독 시작
-	id1, err := conn.Subscribe(newTokenQuery, client.TransfersHandler)
+	// Terminate Signal
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	// Channel for terminate subscribe
+	doneNewToken := make(chan struct{})
+	doneTokenTrade := make(chan struct{})
+
+	// Start to subscribe
+	_, err = connNewToken.Subscribe(newTokenQuery, func(msg []byte) {
+		client.NewTokenHandler(msg)
+	}, doneNewToken)
 	if err != nil {
-		log.Fatalf("Subscribe transfers error: %v", err)
+		log.Fatalf("Subscribe newToken error: %v", err)
 	}
-	id2, err := conn.Subscribe(tokenTradeQuery, client.DexTradesHandler)
+	_, err = connTokenTrade.Subscribe(tokenTradeQuery, func(msg []byte) {
+		client.TokenTradeHandler(msg)
+	}, doneTokenTrade)
 	if err != nil {
-		log.Fatalf("Subscribe dexTrades error: %v", err)
+		log.Fatalf("Subscribe tokenTrade error: %v", err)
 	}
 
-	// 종료 시점에 unsubscribe
-	defer conn.Unsubscribe(id1)
-	defer conn.Unsubscribe(id2)
+	log.Println("Collector Service was started. Press Ctrl+C to Exit")
 
-	// 무한 대기 루프
-	for {
-		time.Sleep(10 * time.Second)
-	}
+	<-stop // Signal wait for terminate
+
+	log.Println("Terminate, Closing...")
+
+	// close subscribe goroutine
+	close(doneNewToken)
+	close(doneTokenTrade)
+
+	// close websocket
+	connNewToken.Close()
+	connTokenTrade.Close()
+
+	log.Println("All connection closed.")
 }

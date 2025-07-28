@@ -1,13 +1,26 @@
 package client
 
 import (
-	"fmt"
+	"encoding/json"
+	"log"
+
+	resp "github.com/cryptoKingdom88/memeCoinBackend/collectorService/client/response"
 )
 
-func TransfersHandler(msg []byte) {
-	fmt.Println("🔄 [Transfers] 메시지:", string(msg))
+func NewTokenHandler(msg []byte) {
+	var result resp.TokenSupplyUpdateRawResponse
+	if err := json.Unmarshal(msg, &result); err != nil {
+		log.Printf("NewTokenHandler JSON error: %v", err)
+		return
+	}
+	log.Printf("[NewToken Created] %v", result)
 }
 
-func DexTradesHandler(msg []byte) {
-	fmt.Println("📈 [DexTrades] 메시지:", string(msg))
+func TokenTradeHandler(msg []byte) {
+	var result resp.TokenTradeRawResponse
+	if err := json.Unmarshal(msg, &result); err != nil {
+		log.Printf("TokenTradeHandler JSON error: %v", err)
+		return
+	}
+	log.Printf("[TokenTraded] %v", result)
 }

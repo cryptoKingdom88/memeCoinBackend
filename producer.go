@@ -11,11 +11,11 @@ import (
 
 func main() {
 	writer := kafka.NewWriter(kafka.WriterConfig{
-		Brokers: []string{"localhost:9092"},
-		Topic:   "new-token-events",
-		Balancer: &kafka.LeastBytes{},
-		BatchSize: 1,                // 배치 전송 안함
-    BatchTimeout: 10 * time.Millisecond, // 전송 지연 최소화
+		Brokers:      []string{"localhost:9092"},
+		Topic:        "new-token-events",
+		Balancer:     &kafka.LeastBytes{},
+		BatchSize:    1,                     // No batch send
+		BatchTimeout: 10 * time.Millisecond, // Minize send delay
 	})
 
 	defer writer.Close()
