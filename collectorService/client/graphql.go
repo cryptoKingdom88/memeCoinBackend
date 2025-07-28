@@ -69,7 +69,7 @@ func Connect(apiKey string) (*Client, error) {
 		"Accept-Encoding":        {"gzip"},
 	}
 
-	dialer := getWebSocketDialer(true)
+	dialer := getWebSocketDialer(false)
 
 	u := url.URL{
 		Scheme:   "wss",
