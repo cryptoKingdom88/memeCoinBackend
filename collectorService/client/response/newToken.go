@@ -10,12 +10,23 @@ type TokenSupplyUpdateSolana struct {
 
 type TokenSupplyUpdateDataItem struct {
 	Block             TokenSupplyUpdateBlockData       `json:"Block"`
+	Instruction       TokenSupplyUpdateInstruction     `json:"Instruction"`
 	TokenSupplyUpdate TokenSupplyUpdateData            `json:"TokenSupplyUpdate"`
 	Transaction       TokenSupplyUpdateTransactionData `json:"Transaction"`
 }
 
 type TokenSupplyUpdateBlockData struct {
 	Time string `json:"Time"`
+}
+
+type TokenSupplyUpdateInstruction struct {
+	Program TokenSupplyUpdateProgramData `json:"Program"`
+}
+
+type TokenSupplyUpdateProgramData struct {
+	Address string `json:"Address"`
+	Method  string `json:"Method"`
+	Name    string `json:"Name"`
 }
 
 type TokenSupplyUpdateData struct {

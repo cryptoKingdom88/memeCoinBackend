@@ -1,11 +1,12 @@
 subscription MyQuery {
   Solana {
     DEXTrades(
-      where: {Trade: {Dex: {ProtocolName: {is: "pump"}}}, Transaction: {Result: {Success: true}}}
+      where: {Trade: {Dex: {ProgramAddress: {in: ["6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"]}}}, Transaction: {Result: {Success: true}}}
     ) {
       Instruction {
         Program {
           Method
+          Address
         }
       }
       Trade {
@@ -15,35 +16,29 @@ subscription MyQuery {
         }
         Buy {
           Amount
-          AmountInUSD
           Account {
             Address
             Owner
           }
           Currency {
-            Name
-            Symbol
             MintAddress
-            Decimals
-            Fungible
-            Uri
+            Native
+            Wrapped
           }
+          PriceInUSD
         }
         Sell {
           Amount
-          AmountInUSD
           Account {
             Address
             Owner
           }
           Currency {
-            Name
-            Symbol
             MintAddress
-            Decimals
-            Fungible
-            Uri
+            Native
+            Wrapped
           }
+          PriceInUSD
         }
       }
       Transaction {

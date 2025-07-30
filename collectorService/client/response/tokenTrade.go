@@ -35,17 +35,19 @@ type TokenTradeDexData struct {
 }
 
 type TokenTradeBuyData struct {
-	Amount      string              `json:"Amount"`
-	AmountInUSD string              `json:"AmountInUSD"`
-	Account     TokenTradeAccount   `json:"Account"`
-	Currency    TokenTradeCurrency  `json:"Currency"`
+	Amount      string             `json:"Amount"`
+	AmountInUSD string             `json:"AmountInUSD"`
+	Account     TokenTradeAccount  `json:"Account"`
+	Currency    TokenTradeCurrency `json:"Currency"`
+	PriceInUSD  float64            `json:"PriceInUSD"`
 }
 
 type TokenTradeSellData struct {
-	Amount      string              `json:"Amount"`
-	AmountInUSD string              `json:"AmountInUSD"`
-	Account     TokenTradeAccount   `json:"Account"`
-	Currency    TokenTradeCurrency  `json:"Currency"`
+	Amount      string             `json:"Amount"`
+	AmountInUSD string             `json:"AmountInUSD"`
+	Account     TokenTradeAccount  `json:"Account"`
+	Currency    TokenTradeCurrency `json:"Currency"`
+	PriceInUSD  float64            `json:"PriceInUSD"`
 }
 
 type TokenTradeAccount struct {
@@ -54,12 +56,9 @@ type TokenTradeAccount struct {
 }
 
 type TokenTradeCurrency struct {
-	Name       string `json:"Name"`
-	Symbol     string `json:"Symbol"`
 	MintAddress string `json:"MintAddress"`
-	Decimals   int    `json:"Decimals"`
-	Fungible   bool   `json:"Fungible"`
-	Uri        string `json:"Uri"`
+	Native      bool   `json:"Native"`
+	Wrapped     bool   `json:"Wrapped"`
 }
 
 type TokenTradeTransactionData struct {

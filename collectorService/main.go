@@ -5,14 +5,21 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/cryptoKingdom88/memeCoinBackend/collectorService/client"
 	"github.com/cryptoKingdom88/memeCoinBackend/collectorService/config"
+	"github.com/cryptoKingdom88/memeCoinBackend/collectorService/kafka"
 )
 
 func main() {
 	cfg := config.LoadConfig()
 	log.Println("Load configuration is completed.")
+
+	// Initialize Kafka writer
+	if err := kafka.Init(cfg.KafkaBrokers); err != nil {
+		log.Fatalf("Kafka initialization failed: %v", err)
+	}
 
 	connNewToken, err := client.Connect(cfg.BitqueryAPIKey)
 	if err != nil {
@@ -65,9 +72,14 @@ func main() {
 	close(doneNewToken)
 	close(doneTokenTrade)
 
+	time.Sleep(5 * time.Second)
+
 	// close websocket
 	connNewToken.Close()
 	connTokenTrade.Close()
+
+	// close Kafka writer
+	kafka.Close()
 
 	log.Println("All connection closed.")
 }

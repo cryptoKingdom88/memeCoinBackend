@@ -177,6 +177,8 @@ func (c *Client) Subscribe(query string, handler func([]byte), done <-chan struc
 			select {
 			case <-done:
 				log.Printf("Subscribe done: %s", id)
+
+				c.Unsubscribe(id)
 				return
 			default:
 				_, rawMsg, err := c.conn.ReadMessage()
@@ -213,7 +215,7 @@ func (c *Client) Subscribe(query string, handler func([]byte), done <-chan struc
 func (c *Client) Unsubscribe(id string) error {
 	unsubMsg := map[string]interface{}{
 		"id":   id,
-		"type": "stop",
+		"type": "complete",
 	}
 	return c.conn.WriteJSON(unsubMsg)
 }

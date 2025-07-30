@@ -2,18 +2,43 @@ package kafka
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
-	"github.com/cryptoKingdom88/memeCoinBackend/collectorService/config"
+	message "github.com/cryptoKingdom88/memeCoinBackend/shared/packet"
 
 	"github.com/segmentio/kafka-go"
 )
 
 var writer *kafka.Writer
 
-func SendKafkaMessage(topic string, key, value []byte) error {
+const (
+	TopicTokenInfo = "token-info"
+	TopicTradeInfo = "trade-info"
+)
+
+func Init(broker string) error {
+	writer = kafka.NewWriter(kafka.WriterConfig{
+		Brokers:      []string{broker},
+		Balancer:     &kafka.LeastBytes{},
+		BatchSize:    1,                     // No batch send
+		BatchTimeout: 10 * time.Millisecond, // Minize send delay
+	})
+
+	log.Println("Kafka writer initialized")
+	return nil
+}
+
+func Close() {
+	if writer != nil {
+		writer.Close()
+		log.Println("Kafka writer closed")
+	}
+}
+
+func SendKafkaMessage(topic string, value []byte) error {
 	if writer == nil {
 		log.Println("Need to initialize Kafka writer")
 		return fmt.Errorf("kafka writer is not initialized")
@@ -22,36 +47,36 @@ func SendKafkaMessage(topic string, key, value []byte) error {
 		Topic: topic,
 		Value: value,
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	err := writer.WriteMessages(context.Background(), msg)
+	err := writer.WriteMessages(ctx, msg)
 	if err != nil {
 		log.Printf("Kafka send error: %v", err)
 	}
 	return err
 }
 
-func Produce(msg []byte) {
-	if writer == nil {
-		log.Println("Need to initialize Kafka writer")
+func ProduceTokenInfo(tokenInfo message.TokenInfo) {
+	// Convert TokenInfo struct to JSON
+	tokenInfoBytes, err := json.Marshal(tokenInfo)
+	if err != nil {
+		log.Printf("Failed to marshal TokenInfo: %v", err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
-	err := writer.WriteMessages(ctx, kafka.Message{
-		Value: msg,
-	})
-	if err != nil {
-		log.Printf("Kafka Transmit Failed: %v", err)
-	} else {
-		log.Println("Kafka Transmit Success")
-	}
+	// Send to Kafka
+	SendKafkaMessage(TopicTokenInfo, tokenInfoBytes)
 }
 
-func Init(cfg config.Config) {
-	writer = &kafka.Writer{
-		Addr:     kafka.TCP(cfg.KafkaBrokers),
-		Balancer: &kafka.LeastBytes{},
-		Async:    true,
+func ProduceTradeInfo(tradeInfo message.TokenTradeHistory) {
+	// Convert TokenInfo struct to JSON
+	tradeInfoBytes, err := json.Marshal(tradeInfo)
+	if err != nil {
+		log.Printf("Failed to marshal TradeInfo: %v", err)
+		return
 	}
+
+	// Send to Kafka
+	SendKafkaMessage(TopicTradeInfo, tradeInfoBytes)
 }
