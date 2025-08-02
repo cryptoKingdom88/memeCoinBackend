@@ -29,6 +29,11 @@ func NewTokenHandler(msg []byte) {
 			CreateTime:  tokenUpdate.Block.Time,
 		}
 
+		if (tokenInfo.Symbol == "" || tokenInfo.Name == "") {
+			log.Printf("TokenInfo Symbol or Name is empty, skipping...")
+			continue
+		}
+
 		// Log the converted struct
 		log.Printf("[NewToken Created] %+v", tokenInfo)
 		
