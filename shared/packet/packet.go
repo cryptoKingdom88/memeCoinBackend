@@ -20,8 +20,3 @@ type TokenTradeHistory struct {
 	TransTime    string
 	TxHash       string
 }
-
-type Payload struct {
-	Query     string                 `json:"query"`
-	Variables map[string]interface{} `json:"variables"`
-}

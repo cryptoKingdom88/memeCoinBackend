@@ -2,9 +2,12 @@ package kafka
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 
+	"github.com/cryptoKingdom88/memeCoinBackend/dbSaveService/batch"
+	"github.com/cryptoKingdom88/memeCoinBackend/shared/packet"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -13,7 +16,8 @@ const (
 	TopicTradeInfo = "trade-info"
 )
 
-func StartTokenInfoConsumer(ctx context.Context, broker string) {
+// StartTokenInfoConsumer starts consuming token info messages and processes them through batch processor
+func StartTokenInfoConsumer(ctx context.Context, broker string, processor *batch.Processor) {
 	go func() {
 		reader := kafka.NewReader(kafka.ReaderConfig{
 			Brokers:  []string{broker},
@@ -37,13 +41,26 @@ func StartTokenInfoConsumer(ctx context.Context, broker string) {
 					log.Printf("❌ [%s] Error reading message: %v", TopicTokenInfo, err)
 					continue
 				}
-				log.Printf("✅ [%s] Message received:\nKey: %s\nValue: %s", TopicTokenInfo, string(m.Key), string(m.Value))
+				
+				// Parse JSON message into TokenInfo struct
+				var tokenInfo packet.TokenInfo
+				if err := json.Unmarshal(m.Value, &tokenInfo); err != nil {
+					log.Printf("❌ [%s] Failed to parse JSON message: %v\nMessage: %s", 
+						TopicTokenInfo, err, string(m.Value))
+					continue
+				}
+				
+				// Add to batch processor
+				processor.AddTokenInfo(tokenInfo)
+				log.Printf("✅ [%s] Token info parsed and added to batch: %s", 
+					TopicTokenInfo, tokenInfo.Token)
 			}
 		}
 	}()
 }
 
-func StartTokenTradeConsumer(ctx context.Context, broker string) {
+// StartTokenTradeConsumer starts consuming token trade messages and processes them through batch processor
+func StartTokenTradeConsumer(ctx context.Context, broker string, processor *batch.Processor) {
 	go func() {
 		reader := kafka.NewReader(kafka.ReaderConfig{
 			Brokers:  []string{broker},
@@ -67,7 +84,19 @@ func StartTokenTradeConsumer(ctx context.Context, broker string) {
 					log.Printf("❌ [%s] Error reading message: %v", TopicTradeInfo, err)
 					continue
 				}
-				log.Printf("✅ [%s] Message received:\nKey: %s\nValue: %s", TopicTradeInfo, string(m.Key), string(m.Value))
+				
+				// Parse JSON message into TokenTradeHistory struct
+				var tradeHistory packet.TokenTradeHistory
+				if err := json.Unmarshal(m.Value, &tradeHistory); err != nil {
+					log.Printf("❌ [%s] Failed to parse JSON message: %v\nMessage: %s", 
+						TopicTradeInfo, err, string(m.Value))
+					continue
+				}
+				
+				// Add to batch processor
+				processor.AddTokenTradeHistory(tradeHistory)
+				log.Printf("✅ [%s] Trade history parsed and added to batch: %s", 
+					TopicTradeInfo, tradeHistory.TxHash)
 			}
 		}
 	}()
