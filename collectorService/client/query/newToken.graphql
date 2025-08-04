@@ -1,7 +1,7 @@
 subscription {
   Solana {
     TokenSupplyUpdates(
-      where: {Instruction: {Program: {Address: {is: "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"}, Method: {is: "create"}}}}
+      where: {Instruction: {Program: {Address: {is: "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"}, Method: {is: "create"}}}}
     ) {
       Block {
         Time
