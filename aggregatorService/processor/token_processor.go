@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"aggregatorService/interfaces"
+	"aggregatorService/logging"
 	"aggregatorService/models"
 )
 
@@ -44,6 +45,9 @@ type TokenProcessor struct {
 	consistencyValidator *DataConsistencyValidator
 	lastValidationTime   time.Time
 	validationMutex      sync.RWMutex
+	
+	// Logging
+	logger *logging.Logger
 }
 
 // NewTokenProcessor creates a new token processor
@@ -85,6 +89,9 @@ func (tp *TokenProcessor) Initialize(tokenAddress string, redisManager interface
 	tp.redisManager = redisManager
 	tp.calculator = calculator
 	tp.goroutineID = fmt.Sprintf("token_processor_%s_%d", tokenAddress, time.Now().UnixNano())
+	
+	// Initialize logger with token context
+	tp.logger = logging.NewLogger("aggregator-service", "token-processor").WithToken(tokenAddress)
 	
 	// Initialize data consistency validator
 	tp.consistencyValidator = NewDataConsistencyValidator(redisManager, calculator)
@@ -235,6 +242,8 @@ func (tp *TokenProcessor) processTradeDirect(ctx context.Context, trade models.T
 		log.Printf("Warning: failed to persist state to Redis for token %s: %v", tp.tokenAddress, err)
 		// Don't return error as the in-memory state is updated
 	}
+	
+
 	
 	return nil
 }

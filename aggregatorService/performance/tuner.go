@@ -44,31 +44,14 @@ func NewPerformanceTuner(cfg *config.Config, logger *logging.Logger, metricsColl
 
 // Initialize sets up initial performance optimizations
 func (pt *PerformanceTuner) Initialize() error {
-	pt.logger.Info("Initializing performance tuner")
-	
 	// Set initial GC target
 	debug.SetGCPercent(pt.cfg.GCTargetPercentage)
-	pt.logger.Info("Set GC target percentage", map[string]interface{}{
-		"gc_target": pt.cfg.GCTargetPercentage,
-	})
 	
 	// Set memory limit if specified
 	if pt.cfg.MemoryLimitMB > 0 {
 		memoryLimit := int64(pt.cfg.MemoryLimitMB) * 1024 * 1024
 		debug.SetMemoryLimit(memoryLimit)
-		pt.logger.Info("Set memory limit", map[string]interface{}{
-			"memory_limit_mb": pt.cfg.MemoryLimitMB,
-			"memory_limit_bytes": memoryLimit,
-		})
 	}
-	
-	// Log initial runtime settings
-	pt.logger.Info("Initial runtime configuration", map[string]interface{}{
-		"gomaxprocs":     runtime.GOMAXPROCS(0),
-		"num_cpu":        runtime.NumCPU(),
-		"gc_target":      pt.cfg.GCTargetPercentage,
-		"memory_limit":   pt.cfg.MemoryLimitMB,
-	})
 	
 	return nil
 }

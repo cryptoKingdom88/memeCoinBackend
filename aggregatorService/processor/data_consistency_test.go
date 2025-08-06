@@ -295,8 +295,6 @@ func TestDataConsistencyValidator_ValidateAggregates(t *testing.T) {
 				TotalVolume: 150.0,
 				StartPrice:  0.1,
 				EndPrice:    0.12,
-				HighPrice:   0.15,
-				LowPrice:    0.09,
 				LastUpdate:  time.Now(),
 			},
 			"5min": {
@@ -307,8 +305,6 @@ func TestDataConsistencyValidator_ValidateAggregates(t *testing.T) {
 				TotalVolume: 200.0,
 				StartPrice:  0.1,
 				EndPrice:    0.11,
-				HighPrice:   0.13,
-				LowPrice:    0.08,
 				LastUpdate:  time.Now(),
 			},
 			"15min": {
@@ -319,8 +315,6 @@ func TestDataConsistencyValidator_ValidateAggregates(t *testing.T) {
 				TotalVolume: 250.0,
 				StartPrice:  0.1,
 				EndPrice:    0.10,
-				HighPrice:   0.12,
-				LowPrice:    0.07,
 				LastUpdate:  time.Now(),
 			},
 			"30min": {
@@ -331,8 +325,6 @@ func TestDataConsistencyValidator_ValidateAggregates(t *testing.T) {
 				TotalVolume: 300.0,
 				StartPrice:  0.1,
 				EndPrice:    0.09,
-				HighPrice:   0.11,
-				LowPrice:    0.06,
 				LastUpdate:  time.Now(),
 			},
 			"1hour": {
@@ -343,8 +335,6 @@ func TestDataConsistencyValidator_ValidateAggregates(t *testing.T) {
 				TotalVolume: 350.0,
 				StartPrice:  0.1,
 				EndPrice:    0.08,
-				HighPrice:   0.10,
-				LowPrice:    0.05,
 				LastUpdate:  time.Now(),
 			},
 		},
@@ -374,8 +364,6 @@ func TestDataConsistencyValidator_ValidateAggregates(t *testing.T) {
 				TotalVolume: 200.0, // Inconsistent total (should be 50.0)
 				StartPrice:  0.1,
 				EndPrice:    0.12,
-				HighPrice:   0.08, // High < Low (invalid)
-				LowPrice:    0.15,
 				LastUpdate:  time.Now(),
 			},
 			// Missing other required aggregates

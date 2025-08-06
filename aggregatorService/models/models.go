@@ -31,8 +31,6 @@ type AggregateData struct {
 	PriceChange  float64   `json:"price_change"`  // Price change %
 	StartPrice   float64   `json:"start_price"`   // Window start price
 	EndPrice     float64   `json:"end_price"`     // Current/end price
-	HighPrice    float64   `json:"high_price"`    // Highest price in window
-	LowPrice     float64   `json:"low_price"`     // Lowest price in window
 	LastUpdate   time.Time `json:"last_update"`   // Last calculation time
 }
 
@@ -76,8 +74,6 @@ func NewAggregateData() *AggregateData {
 		PriceChange: 0.0,
 		StartPrice:  0.0,
 		EndPrice:    0.0,
-		HighPrice:   0.0,
-		LowPrice:    0.0,
 		LastUpdate:  time.Now(),
 	}
 }
@@ -93,8 +89,6 @@ func (ad *AggregateData) Clone() *AggregateData {
 		PriceChange: ad.PriceChange,
 		StartPrice:  ad.StartPrice,
 		EndPrice:    ad.EndPrice,
-		HighPrice:   ad.HighPrice,
-		LowPrice:    ad.LowPrice,
 		LastUpdate:  ad.LastUpdate,
 	}
 }
@@ -113,14 +107,6 @@ func (ad *AggregateData) AddTrade(trade TradeData) {
 
 	ad.TotalVolume += volume
 	ad.EndPrice = trade.PriceUsd
-
-	// Update price range
-	if ad.HighPrice == 0 || trade.PriceUsd > ad.HighPrice {
-		ad.HighPrice = trade.PriceUsd
-	}
-	if ad.LowPrice == 0 || trade.PriceUsd < ad.LowPrice {
-		ad.LowPrice = trade.PriceUsd
-	}
 
 	// Set start price if not set
 	if ad.StartPrice == 0 {
@@ -348,8 +334,6 @@ func (ad *AggregateData) Reset() {
 	ad.PriceChange = 0.0
 	ad.StartPrice = 0.0
 	ad.EndPrice = 0.0
-	ad.HighPrice = 0.0
-	ad.LowPrice = 0.0
 	ad.LastUpdate = time.Now()
 }
 

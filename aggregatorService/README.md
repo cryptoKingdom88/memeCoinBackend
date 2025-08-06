@@ -1,21 +1,21 @@
 # Aggregator Service
 
-실시간 토큰 거래 데이터 집계 서비스입니다.
+Real-time token trade data aggregation service.
 
-## 개요
+## Overview
 
-Aggregator Service는 Kafka에서 토큰 거래 데이터를 실시간으로 소비하여 다양한 시간 창(time window)에 대한 집계 데이터를 계산하고 Redis에 저장하는 서비스입니다.
+The Aggregator Service consumes token trade data from Kafka in real-time, calculates aggregated data for various time windows, and stores the results in Redis.
 
-## 주요 기능
+## Key Features
 
-- **실시간 거래 데이터 처리**: Kafka에서 거래 데이터를 실시간으로 소비
-- **슬라이딩 윈도우 집계**: 1분, 5분, 15분, 30분, 1시간 단위의 집계 데이터 계산
-- **Redis 저장**: 집계된 데이터를 Redis에 효율적으로 저장
-- **성능 최적화**: 메모리 사용량, GC 튜닝, 동시성 최적화
-- **모니터링**: 메트릭 수집 및 성능 모니터링
-- **유지보수**: 자동 데이터 정리 및 복구 기능
+- **Real-time Trade Processing**: Consumes trade data from Kafka in real-time
+- **Sliding Window Aggregation**: Calculates aggregated data for 1min, 5min, 15min, 30min, and 1hour windows
+- **Redis Storage**: Efficiently stores aggregated data in Redis
+- **Performance Optimization**: Memory usage, GC tuning, and concurrency optimization
+- **Monitoring**: Metrics collection and performance monitoring via HTTP endpoints
+- **Maintenance**: Automatic data cleanup and recovery functionality
 
-## 아키텍처
+## Architecture
 
 ```
 Kafka → Consumer → Block Aggregator → Token Processors → Redis
@@ -25,73 +25,151 @@ Kafka → Consumer → Block Aggregator → Token Processors → Redis
                               Performance Monitor
 ```
 
-## 설정
+## Configuration
 
-환경 변수를 통해 서비스를 설정할 수 있습니다. `.env.example` 파일을 참조하세요.
+Configure the service using environment variables. See `.env.example` for reference.
 
-### 주요 설정
+### Key Settings
 
-- **Kafka**: 브로커 주소, 토픽, 컨슈머 그룹
-- **Redis**: 연결 정보, 풀 크기, 타임아웃
-- **시간 창**: 집계할 시간 단위 설정
-- **성능 튜닝**: GC 설정, 메모리 제한, 동시성 설정
+- **Kafka**: Broker addresses, topic, consumer group
+- **Redis**: Connection info, pool size, timeouts
+- **Time Windows**: Time units for aggregation
+- **Performance Tuning**: GC settings, memory limits, concurrency settings
+- **Logging**: Log level configuration (DEBUG, INFO, WARN, ERROR, FATAL)
 
-## 실행
+## Running the Service
 
 ```bash
-# 환경 변수 설정
+# Set up environment variables
 cp .env.example .env
-# .env 파일을 편집하여 설정 조정
+# Edit .env file to adjust settings
 
-# 서비스 빌드
+# Build the service
 go build -o aggregatorService
 
-# 서비스 실행
+# Run the service
 ./aggregatorService
 ```
 
-## 모니터링
+## Monitoring & Metrics
 
-서비스는 HTTP 엔드포인트를 통해 모니터링할 수 있습니다:
+The service provides HTTP endpoints for monitoring and operational insights:
 
-- `GET /health` - 서비스 상태 확인
-- `GET /health/ready` - 준비 상태 확인
-- `GET /metrics` - Prometheus 형식 메트릭
-- `GET /metrics/json` - JSON 형식 메트릭
-- `GET /performance` - 성능 통계
+### Health Check Endpoints
+- `GET /health` - Overall service health status
+- `GET /health/live` - Liveness probe (is the service running?)
+- `GET /health/ready` - Readiness probe (is the service ready to accept traffic?)
 
-## 성능 최적화
+### Metrics Endpoints
+- `GET /metrics` - Prometheus format metrics for monitoring systems
+- `GET /metrics/json` - JSON format metrics for debugging
+- `GET /performance` - Performance statistics and tuning information
 
-성능 최적화에 대한 자세한 내용은 [PERFORMANCE.md](PERFORMANCE.md)를 참조하세요.
+### Performance Management Endpoints
+- `POST /performance/gc` - Force garbage collection
+- `POST /performance/optimize/throughput` - Optimize for high throughput
+- `POST /performance/optimize/latency` - Optimize for low latency
 
-### 성능 테스트
+### What Metrics Are Used For
+
+**Operational Monitoring:**
+- Track service health and availability
+- Monitor processing performance (trades/second)
+- Detect bottlenecks and performance issues
+- Alert on service failures or degradation
+
+**Performance Optimization:**
+- Memory usage and garbage collection metrics
+- Processing latency and throughput statistics
+- Redis operation performance
+- Worker pool utilization
+
+**Business Intelligence:**
+- Total trades processed
+- Active token count
+- Processing volume trends
+- System capacity planning
+
+**Integration with Monitoring Systems:**
+- Prometheus/Grafana dashboards
+- Alerting systems (PagerDuty, Slack)
+- Log aggregation (ELK stack)
+- APM tools (DataDog, New Relic)
+
+## Performance Optimization
+
+For detailed performance optimization information, see [PERFORMANCE.md](PERFORMANCE.md).
+
+### Performance Testing
 
 ```bash
-# 성능 테스트 스크립트 실행
+# Run performance test script
 ./scripts/performance_test.sh
 ```
 
-## 개발
+## Logging
 
-### 테스트 실행
+The service uses structured JSON logging. Control log output volume through log levels:
+
+- `DEBUG`: All debug information (development use)
+- `INFO`: General information messages (default)
+- `WARN`: Warnings and important events only (production recommended)
+- `ERROR`: Error messages only
+- `FATAL`: Fatal errors only
+
+### Batch Processing Completion Logs
+
+When a complete batch of trades from Kafka is processed, the following information is logged:
+
+```json
+{
+  "level": "INFO",
+  "message": "Batch processing completed",
+  "total_trades": 150,
+  "unique_tokens": 12,
+  "processing_time": "25.3ms",
+  "trades_per_sec": 5928.5
+}
+```
+
+### Log Level Configuration
+
+```bash
+# Production environment (minimal logs)
+export LOG_LEVEL=WARN
+
+# Development environment (detailed logs)
+export LOG_LEVEL=DEBUG
+```
+
+## Development
+
+### Running Tests
 
 ```bash
 go test ./...
 ```
 
-### 코드 구조
+### Log Testing
 
-- `main.go` - 메인 서비스 진입점
-- `config/` - 설정 관리
-- `kafka/` - Kafka 컨슈머
-- `processor/` - 거래 데이터 처리
-- `aggregation/` - 슬라이딩 윈도우 집계
-- `redis/` - Redis 연결 및 데이터 저장
-- `metrics/` - 메트릭 수집 및 HTTP 서버
-- `performance/` - 성능 튜닝 및 모니터링
-- `maintenance/` - 유지보수 서비스
-- `logging/` - 구조화된 로깅
+```bash
+# Test log level configuration
+./test_logs.sh
+```
 
-## 라이센스
+### Code Structure
 
-이 프로젝트는 MIT 라이센스 하에 배포됩니다.
+- `main.go` - Main service entry point
+- `config/` - Configuration management
+- `kafka/` - Kafka consumer
+- `processor/` - Trade data processing
+- `aggregation/` - Sliding window aggregation
+- `redis/` - Redis connection and data storage
+- `metrics/` - Metrics collection and HTTP server
+- `performance/` - Performance tuning and monitoring
+- `maintenance/` - Maintenance service
+- `logging/` - Structured logging
+
+## License
+
+This project is distributed under the MIT License.

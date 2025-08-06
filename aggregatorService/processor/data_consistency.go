@@ -431,7 +431,7 @@ func (dcv *DataConsistencyValidator) validateAggregates(ctx context.Context, tok
 		}
 		
 		// Check price consistency
-		if aggregate.StartPrice < 0 || aggregate.EndPrice < 0 || aggregate.HighPrice < 0 || aggregate.LowPrice < 0 {
+		if aggregate.StartPrice < 0 || aggregate.EndPrice < 0 {
 			result.Issues = append(result.Issues, ValidationIssue{
 				Type:        "negative_price",
 				Description: fmt.Sprintf("Negative price values for time window %s", windowName),
@@ -439,17 +439,6 @@ func (dcv *DataConsistencyValidator) validateAggregates(ctx context.Context, tok
 				Field:       "prices",
 				Expected:    ">= 0",
 				Actual:      "negative values found",
-			})
-		}
-		
-		if aggregate.HighPrice < aggregate.LowPrice {
-			result.Issues = append(result.Issues, ValidationIssue{
-				Type:        "invalid_price_range",
-				Description: fmt.Sprintf("High price (%f) less than low price (%f) for time window %s", aggregate.HighPrice, aggregate.LowPrice, windowName),
-				Severity:    "high",
-				Field:       "price_range",
-				Expected:    "high >= low",
-				Actual:      fmt.Sprintf("high=%f, low=%f", aggregate.HighPrice, aggregate.LowPrice),
 			})
 		}
 	}

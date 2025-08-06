@@ -9,6 +9,7 @@ import (
 
 	"github.com/cryptoKingdom88/memeCoinBackend/shared/packet"
 	"aggregatorService/interfaces"
+	"aggregatorService/logging"
 	"aggregatorService/models"
 )
 
@@ -29,6 +30,9 @@ type BlockAggregator struct {
 	isInitialized bool
 	isShutdown    bool
 	shutdownMutex sync.RWMutex
+	
+	// Logging
+	logger *logging.Logger
 }
 
 // NewBlockAggregator creates a new block aggregator
@@ -61,14 +65,15 @@ func (ba *BlockAggregator) Initialize(redisManager interfaces.RedisManager, calc
 	ba.redisManager = redisManager
 	ba.calculator = calculator
 	ba.workerPool = workerPool
+	ba.logger = logging.NewLogger("aggregator-service", "block-aggregator")
 	ba.isInitialized = true
-	
-	log.Printf("BlockAggregator initialized with max token processors: %d", ba.maxTokenProcessors)
 	return nil
 }
 
 // ProcessTrades processes multiple trades grouped by token address
 func (ba *BlockAggregator) ProcessTrades(ctx context.Context, trades []packet.TokenTradeHistory) error {
+	startTime := time.Now()
+	
 	ba.shutdownMutex.RLock()
 	if ba.isShutdown {
 		ba.shutdownMutex.RUnlock()
@@ -127,7 +132,15 @@ func (ba *BlockAggregator) ProcessTrades(ctx context.Context, trades []packet.To
 		return errors[0]
 	}
 	
-	log.Printf("Successfully processed %d trades for %d tokens", len(trades), len(tradeGroups))
+	// Log batch processing completion with timing
+	processingTime := time.Since(startTime)
+	ba.logger.Info("Batch processing completed", map[string]interface{}{
+		"total_trades":     len(trades),
+		"unique_tokens":    len(tradeGroups),
+		"processing_time":  processingTime.String(),
+		"trades_per_sec":   float64(len(trades)) / processingTime.Seconds(),
+	})
+	
 	return nil
 }
 

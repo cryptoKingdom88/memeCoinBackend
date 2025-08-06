@@ -48,10 +48,7 @@ func (m *Monitor) Start(ctx context.Context) error {
 	m.running = true
 	m.mu.Unlock()
 	
-	m.logger.Info("Starting performance monitor", map[string]interface{}{
-		"monitor_interval": m.monitorInterval.String(),
-		"tune_interval":    m.tuneInterval.String(),
-	})
+
 	
 	go m.monitorLoop(ctx)
 	return nil

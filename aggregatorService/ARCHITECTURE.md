@@ -1,0 +1,521 @@
+# Aggregator Service Architecture
+
+## System Overview
+
+```mermaid
+graph TB
+    subgraph "External Systems"
+        K[Kafka Cluster]
+        R[Redis Cluster]
+    end
+    
+    subgraph "Aggregator Service"
+        subgraph "Main Service"
+            M[Main Service Controller]
+            HC[Health Checker]
+            PM[Performance Monitor]
+            PT[Performance Tuner]
+        end
+        
+        subgraph "Data Processing Pipeline"
+            KC[Kafka Consumer]
+            BA[Block Aggregator]
+            TP[Token Processors]
+            SW[Sliding Window Calculator]
+        end
+        
+        subgraph "Storage & Maintenance"
+            RM[Redis Manager]
+            MS[Maintenance Service]
+        end
+        
+        subgraph "Monitoring & Metrics"
+            MC[Metrics Collector]
+            MH[Metrics HTTP Server]
+        end
+        
+        subgraph "Worker Management"
+            WP[Worker Pool]
+        end
+    end
+    
+    subgraph "Monitoring Systems"
+        P[Prometheus]
+        G[Grafana]
+        A[Alerting]
+    end
+    
+    %% Data Flow
+    K -->|Trade Data| KC
+    KC -->|Batch Trades| BA
+    BA -->|Token Trades| TP
+    TP -->|Calculate| SW
+    TP -->|Store| RM
+    RM -->|Data| R
+    
+    %% Worker Management
+    BA -->|Submit Jobs| WP
+    WP -->|Execute| TP
+    
+    %% Maintenance
+    MS -->|Cleanup| RM
+    MS -->|Health Check| TP
+    
+    %% Monitoring
+    TP -->|Metrics| MC
+    BA -->|Metrics| MC
+    RM -->|Metrics| MC
+    MC -->|Expose| MH
+    MH -->|Scrape| P
+    P -->|Visualize| G
+    P -->|Alert| A
+    
+    %% Service Management
+    M -->|Control| KC
+    M -->|Control| MS
+    M -->|Control| PM
+    HC -->|Monitor| TP
+    PM -->|Tune| PT
+    
+    style K fill:#e1f5fe
+    style R fill:#e8f5e8
+    style M fill:#fff3e0
+    style BA fill:#f3e5f5
+    style TP fill:#e3f2fd
+```
+
+## Data Flow Architecture
+
+```mermaid
+sequenceDiagram
+    participant K as Kafka
+    participant KC as Kafka Consumer
+    participant BA as Block Aggregator
+    participant WP as Worker Pool
+    participant TP as Token Processor
+    participant SW as Sliding Window
+    participant RM as Redis Manager
+    participant R as Redis
+    participant MC as Metrics Collector
+    
+    K->>KC: Trade Batch
+    KC->>BA: Process Trades
+    BA->>BA: Group by Token
+    
+    loop For each token
+        BA->>WP: Submit Job
+        WP->>TP: Execute Processing
+        TP->>SW: Calculate Windows
+        SW-->>TP: Updated Aggregates
+        TP->>RM: Store Data
+        RM->>R: Persist
+        TP->>MC: Record Metrics
+    end
+    
+    BA->>MC: Batch Completion Metrics
+    MC-->>BA: Metrics Recorded
+```
+
+## Component Interaction
+
+```mermaid
+graph LR
+    subgraph "Processing Components"
+        KC[Kafka Consumer]
+        BA[Block Aggregator]
+        TP[Token Processor]
+        SW[Sliding Window Calculator]
+    end
+    
+    subgraph "Storage Components"
+        RM[Redis Manager]
+        R[(Redis)]
+    end
+    
+    subgraph "Management Components"
+        WP[Worker Pool]
+        MS[Maintenance Service]
+        MC[Metrics Collector]
+    end
+    
+    subgraph "Monitoring Components"
+        MH[Metrics HTTP Server]
+        HC[Health Checker]
+        PM[Performance Monitor]
+    end
+    
+    KC -->|trades| BA
+    BA -->|jobs| WP
+    WP -->|execute| TP
+    TP -->|calculate| SW
+    TP -->|store| RM
+    RM -->|persist| R
+    
+    MS -->|cleanup| RM
+    MS -->|health check| TP
+    
+    TP -->|metrics| MC
+    BA -->|metrics| MC
+    RM -->|metrics| MC
+    MC -->|expose| MH
+    
+    HC -->|monitor| TP
+    PM -->|optimize| TP
+    
+    style KC fill:#e3f2fd
+    style BA fill:#f3e5f5
+    style TP fill:#e8f5e8
+    style SW fill:#fff3e0
+    style RM fill:#fce4ec
+    style R fill:#e1f5fe
+```
+
+## Sliding Window Calculation Algorithm
+
+```mermaid
+graph TD
+    subgraph "Input Data"
+        NT[New Trade]
+        TB[Trade Buffer]
+        IDX[Current Indices]
+        AGG[Current Aggregates]
+    end
+    
+    subgraph "Sliding Window Algorithm"
+        SW[Sliding Window Calculator]
+        
+        subgraph "For Each Time Window"
+            FE[Find Expired Trades]
+            RE[Remove Expired Data]
+            AT[Add New Trade]
+            CA[Calculate Aggregates]
+            UI[Update Index]
+        end
+    end
+    
+    subgraph "Window Processing"
+        W1[1min Window<br/>60 seconds]
+        W5[5min Window<br/>300 seconds]
+        W15[15min Window<br/>900 seconds]
+        W30[30min Window<br/>1800 seconds]
+        W60[60min Window<br/>3600 seconds]
+    end
+    
+    subgraph "Output"
+        NIDX[New Indices]
+        NAGG[New Aggregates]
+    end
+    
+    NT -->|input| SW
+    TB -->|input| SW
+    IDX -->|input| SW
+    AGG -->|input| SW
+    
+    SW -->|process| FE
+    FE -->|expired trades| RE
+    RE -->|subtract from aggregate| AT
+    AT -->|add to aggregate| CA
+    CA -->|calculate| UI
+    
+    SW -->|apply to| W1
+    SW -->|apply to| W5
+    SW -->|apply to| W15
+    SW -->|apply to| W30
+    SW -->|apply to| W60
+    
+    UI -->|output| NIDX
+    CA -->|output| NAGG
+    
+    style NT fill:#e3f2fd
+    style SW fill:#fff3e0
+    style FE fill:#ffebee
+    style RE fill:#ffebee
+    style AT fill:#e8f5e8
+    style CA fill:#e8f5e8
+```
+
+## Sliding Window Time-based Processing
+
+```mermaid
+timeline
+    title Sliding Window Processing Example (5-minute window)
+    
+    section T-5min
+        Trade A : $0.10 : Buy 100
+        Trade B : $0.11 : Sell 50
+    
+    section T-4min
+        Trade C : $0.12 : Buy 200
+    
+    section T-3min
+        Trade D : $0.09 : Sell 150
+    
+    section T-2min
+        Trade E : $0.13 : Buy 75
+    
+    section T-1min
+        Trade F : $0.10 : Sell 100
+    
+    section T-now
+        New Trade : $0.14 : Buy 50
+        Window Slides : Expire Trade A & B
+        Calculate : New aggregates
+        Update : Index points to Trade C
+```
+
+## Detailed Sliding Window Algorithm Flow
+
+```mermaid
+flowchart TD
+    START([New Trade Arrives])
+    
+    subgraph "Initialization"
+        LOAD[Load Current State<br/>- Trade Buffer<br/>- Indices<br/>- Aggregates]
+    end
+    
+    subgraph "Window Processing Loop"
+        LOOP{For Each Time Window}
+        
+        subgraph "Expiration Check"
+            CALC_CUTOFF[Calculate Cutoff Time<br/>Current Time - Window Duration]
+            FIND_EXP[Find Expired Trades<br/>From Current Index]
+            CHECK_EXP{Has Expired Trades?}
+        end
+        
+        subgraph "Remove Expired Data"
+            SUB_COUNT[Subtract Expired<br/>Buy/Sell Counts]
+            SUB_VOL[Subtract Expired<br/>Buy/Sell Volumes]
+            UPD_PRICE[Update Start Price<br/>if needed]
+            UPD_IDX[Update Index<br/>to First Valid Trade]
+        end
+        
+        subgraph "Add New Trade"
+            ADD_COUNT[Add New Trade<br/>Buy/Sell Count]
+            ADD_VOL[Add New Trade<br/>Buy/Sell Volume]
+            UPD_END[Update End Price]
+            CALC_CHANGE[Calculate Price Change %<br/>(End - Start) / Start * 100]
+            UPD_TIME[Update Last Update Time]
+        end
+    end
+    
+    subgraph "Finalization"
+        STORE[Store Updated Data<br/>to Redis]
+        RETURN[Return New Indices<br/>and Aggregates]
+    end
+    
+    START --> LOAD
+    LOAD --> LOOP
+    
+    LOOP --> CALC_CUTOFF
+    CALC_CUTOFF --> FIND_EXP
+    FIND_EXP --> CHECK_EXP
+    
+    CHECK_EXP -->|Yes| SUB_COUNT
+    SUB_COUNT --> SUB_VOL
+    SUB_VOL --> UPD_PRICE
+    UPD_PRICE --> UPD_IDX
+    UPD_IDX --> ADD_COUNT
+    
+    CHECK_EXP -->|No| ADD_COUNT
+    
+    ADD_COUNT --> ADD_VOL
+    ADD_VOL --> UPD_END
+    UPD_END --> CALC_CHANGE
+    CALC_CHANGE --> UPD_TIME
+    
+    UPD_TIME --> LOOP
+    LOOP -->|Next Window| CALC_CUTOFF
+    LOOP -->|All Done| STORE
+    
+    STORE --> RETURN
+    RETURN --> END([Complete])
+    
+    style START fill:#e3f2fd
+    style FIND_EXP fill:#ffebee
+    style SUB_COUNT fill:#ffebee
+    style SUB_VOL fill:#ffebee
+    style ADD_COUNT fill:#e8f5e8
+    style ADD_VOL fill:#e8f5e8
+    style STORE fill:#fff3e0
+    style END fill:#e3f2fd
+```
+
+## Time Window Data Structure
+
+```mermaid
+erDiagram
+    TRADE_BUFFER {
+        int index
+        string token_address
+        string wallet
+        string sell_buy
+        float native_amount
+        float token_amount
+        float price_usd
+        timestamp trans_time
+        string tx_hash
+    }
+    
+    TIME_WINDOW {
+        string name
+        duration window_duration
+        int64 current_index
+    }
+    
+    AGGREGATE_DATA {
+        int64 sell_count
+        int64 buy_count
+        float64 sell_volume
+        float64 buy_volume
+        float64 total_volume
+        float64 price_change
+        float64 start_price
+        float64 end_price
+        timestamp last_update
+    }
+    
+    SLIDING_WINDOW_STATE {
+        string token_address
+        map indices
+        map aggregates
+        array trade_buffer
+    }
+    
+    TRADE_BUFFER ||--o{ TIME_WINDOW : "processed by"
+    TIME_WINDOW ||--|| AGGREGATE_DATA : "generates"
+    SLIDING_WINDOW_STATE ||--o{ TIME_WINDOW : "contains"
+    SLIDING_WINDOW_STATE ||--o{ AGGREGATE_DATA : "maintains"
+```
+
+## Service Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Initializing
+    
+    Initializing --> ConfigLoading : Load Config
+    ConfigLoading --> ComponentInit : Config Loaded
+    ComponentInit --> HealthCheck : Components Ready
+    HealthCheck --> Starting : Health OK
+    Starting --> Running : Services Started
+    
+    Running --> Processing : Trade Data Available
+    Processing --> Aggregating : Trades Grouped
+    Aggregating --> Storing : Windows Calculated
+    Storing --> Processing : Data Persisted
+    
+    Running --> Maintenance : Periodic Cleanup
+    Maintenance --> Running : Cleanup Complete
+    
+    Running --> Monitoring : Collect Metrics
+    Monitoring --> Running : Metrics Exposed
+    
+    Running --> Shutting : Shutdown Signal
+    Shutting --> Stopped : Graceful Shutdown
+    Stopped --> [*]
+    
+    ComponentInit --> Error : Init Failed
+    HealthCheck --> Error : Health Failed
+    Starting --> Error : Start Failed
+    Processing --> Error : Processing Failed
+    Error --> [*]
+```
+
+## Performance Monitoring Flow
+
+```mermaid
+graph TB
+    subgraph "Performance Components"
+        PM[Performance Monitor]
+        PT[Performance Tuner]
+        MC[Metrics Collector]
+    end
+    
+    subgraph "System Metrics"
+        MEM[Memory Usage]
+        GC[GC Statistics]
+        CPU[CPU Usage]
+        THR[Throughput]
+    end
+    
+    subgraph "Optimization Actions"
+        GCT[GC Tuning]
+        MEM_OPT[Memory Optimization]
+        CONC[Concurrency Tuning]
+    end
+    
+    subgraph "Monitoring Endpoints"
+        HEALTH[/health]
+        METRICS[/metrics]
+        PERF[/performance]
+        OPT[/performance/optimize]
+    end
+    
+    PM -->|collect| MEM
+    PM -->|collect| GC
+    PM -->|collect| CPU
+    PM -->|collect| THR
+    
+    MEM -->|analyze| PT
+    GC -->|analyze| PT
+    CPU -->|analyze| PT
+    THR -->|analyze| PT
+    
+    PT -->|apply| GCT
+    PT -->|apply| MEM_OPT
+    PT -->|apply| CONC
+    
+    MC -->|expose| HEALTH
+    MC -->|expose| METRICS
+    MC -->|expose| PERF
+    PT -->|expose| OPT
+    
+    style PM fill:#e3f2fd
+    style PT fill:#e8f5e8
+    style MC fill:#fff3e0
+```
+
+## Error Handling & Recovery
+
+```mermaid
+graph TD
+    subgraph "Error Sources"
+        KE[Kafka Errors]
+        RE[Redis Errors]
+        PE[Processing Errors]
+        ME[Memory Errors]
+    end
+    
+    subgraph "Error Handling"
+        EH[Error Handler]
+        PR[Panic Recovery]
+        RT[Retry Logic]
+        FB[Fallback Mechanism]
+    end
+    
+    subgraph "Recovery Actions"
+        RC[Reconnect]
+        RS[Restart Component]
+        SK[Skip Invalid Data]
+        AL[Alert & Log]
+    end
+    
+    KE -->|handle| EH
+    RE -->|handle| EH
+    PE -->|handle| EH
+    ME -->|recover| PR
+    
+    EH -->|retry| RT
+    EH -->|fallback| FB
+    PR -->|restart| RS
+    
+    RT -->|success| RC
+    RT -->|failure| AL
+    FB -->|continue| SK
+    RS -->|recovery| RC
+    
+    style EH fill:#ffebee
+    style PR fill:#fff3e0
+    style RT fill:#e8f5e8
+    style FB fill:#e3f2fd
+```

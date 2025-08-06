@@ -283,7 +283,7 @@ func TestSlidingWindowCalculator_UpdateWindowsMultipleTimeframes(t *testing.T) {
 	
 	// Update windows
 	ctx := context.Background()
-	newIndices, newAggregates, err := calculator.UpdateWindows(
+	_, newAggregates, err := calculator.UpdateWindows(
 		ctx,
 		trades,
 		indices,
@@ -634,12 +634,6 @@ func TestSlidingWindowCalculator_PriceCalculations(t *testing.T) {
 	}
 	if aggregate.EndPrice != 0.10 {
 		t.Errorf("Expected end price 0.10, got %f", aggregate.EndPrice)
-	}
-	if aggregate.HighPrice != 0.12 {
-		t.Errorf("Expected high price 0.12, got %f", aggregate.HighPrice)
-	}
-	if aggregate.LowPrice != 0.08 {
-		t.Errorf("Expected low price 0.08, got %f", aggregate.LowPrice)
 	}
 	
 	// Price change should be (0.10 - 0.08) / 0.08 * 100 = 25%

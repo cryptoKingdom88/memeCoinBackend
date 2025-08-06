@@ -57,14 +57,10 @@ func main() {
 	// Load configuration
 	cfg := config.LoadConfig()
 	service.cfg = cfg
-	service.logger.Info("Configuration loaded successfully", map[string]interface{}{
-		"kafka_brokers":        cfg.KafkaBrokers,
-		"kafka_topic":          cfg.KafkaTopic,
-		"redis_addr":           cfg.RedisAddr,
-		"time_windows":         len(cfg.TimeWindows),
-		"maintenance_interval": cfg.MaintenanceInterval.String(),
-		"max_workers":          cfg.MaxWorkers,
-		"metrics_enabled":      cfg.MetricsEnabled,
+	service.logger.Info("Configuration loaded", map[string]interface{}{
+		"kafka_topic":    cfg.KafkaTopic,
+		"time_windows":   len(cfg.TimeWindows),
+		"max_workers":    cfg.MaxWorkers,
 	})
 	
 	// Create context for graceful shutdown
@@ -123,133 +119,88 @@ func main() {
 
 // initializeComponents initializes all service components
 func (s *Service) initializeComponents(ctx context.Context) error {
-	s.logger.Info("Initializing service components")
-	
 	// Initialize Redis manager
-	s.logger.Debug("Initializing Redis manager")
 	s.redisManager = redis.NewManager(s.cfg.RedisAddr, s.cfg.RedisPassword, s.cfg.RedisDB, s.cfg.RedisPoolSize)
 	if err := s.redisManager.Connect(ctx); err != nil {
 		return fmt.Errorf("failed to connect to Redis: %w", err)
 	}
-	s.logger.Info("Redis manager initialized successfully")
 
 	// Initialize sliding window calculator
-	s.logger.Debug("Initializing sliding window calculator")
 	s.calculator = aggregation.NewCalculator()
 	if err := s.calculator.Initialize(s.cfg.TimeWindows); err != nil {
 		return fmt.Errorf("failed to initialize calculator: %w", err)
 	}
-	s.logger.Info("Sliding window calculator initialized successfully", map[string]interface{}{
-		"time_windows": len(s.cfg.TimeWindows),
-	})
 
 	// Initialize worker pool
-	s.logger.Debug("Initializing worker pool")
 	s.workerPool = worker.NewPool()
 	if err := s.workerPool.Initialize(s.cfg.MaxWorkers); err != nil {
 		return fmt.Errorf("failed to initialize worker pool: %w", err)
 	}
-	s.logger.Info("Worker pool initialized successfully", map[string]interface{}{
-		"max_workers": s.cfg.MaxWorkers,
-	})
 
 	// Initialize block aggregator
-	s.logger.Debug("Initializing block aggregator")
 	s.blockAggregator = processor.NewBlockAggregator()
 	if err := s.blockAggregator.Initialize(s.redisManager, s.calculator, s.workerPool); err != nil {
 		return fmt.Errorf("failed to initialize block aggregator: %w", err)
 	}
-	s.logger.Info("Block aggregator initialized successfully")
 
 	// Initialize Kafka consumer
-	s.logger.Debug("Initializing Kafka consumer")
 	s.kafkaConsumer = kafka.NewConsumer()
 	if err := s.kafkaConsumer.Initialize(s.cfg.KafkaBrokers, s.cfg.KafkaTopic, s.cfg.ConsumerGroup); err != nil {
 		return fmt.Errorf("failed to initialize Kafka consumer: %w", err)
 	}
-	s.logger.Info("Kafka consumer initialized successfully", map[string]interface{}{
-		"brokers":        s.cfg.KafkaBrokers,
-		"topic":          s.cfg.KafkaTopic,
-		"consumer_group": s.cfg.ConsumerGroup,
-	})
 
 	// Initialize maintenance service
-	s.logger.Debug("Initializing maintenance service")
 	s.maintenanceService = maintenance.NewService()
 	if err := s.maintenanceService.Initialize(s.redisManager, s.cfg.MaintenanceInterval, s.cfg.StaleThreshold); err != nil {
 		return fmt.Errorf("failed to initialize maintenance service: %w", err)
 	}
-	s.logger.Info("Maintenance service initialized successfully", map[string]interface{}{
-		"interval":        s.cfg.MaintenanceInterval.String(),
-		"stale_threshold": s.cfg.StaleThreshold.String(),
-	})
 
 	// Initialize metrics collector
-	s.logger.Debug("Initializing metrics collector")
 	s.metricsCollector = metrics.NewCollector()
 	if err := s.metricsCollector.Initialize(); err != nil {
 		return fmt.Errorf("failed to initialize metrics collector: %w", err)
 	}
-	s.logger.Info("Metrics collector initialized successfully")
 
-	// Initialize performance tuner first (needed for metrics server)
-	s.logger.Debug("Initializing performance tuner")
+	// Initialize performance tuner
 	s.performanceTuner = performance.NewPerformanceTuner(s.cfg, s.logger, s.metricsCollector)
 	if err := s.performanceTuner.Initialize(); err != nil {
 		return fmt.Errorf("failed to initialize performance tuner: %w", err)
 	}
-	s.logger.Info("Performance tuner initialized successfully")
 
 	// Initialize metrics server if enabled
 	if s.cfg.MetricsEnabled {
-		s.logger.Debug("Initializing metrics server")
 		s.metricsServer = metrics.NewServerWithPerformanceTuner(s.metricsCollector, s, s.performanceTuner, s.cfg.MetricsPort)
-		s.logger.Info("Metrics server initialized successfully", map[string]interface{}{
-			"port": s.cfg.MetricsPort,
-		})
 	}
 
 	// Initialize performance monitor
-	s.logger.Debug("Initializing performance monitor")
 	s.performanceMonitor = performance.NewMonitor(s.performanceTuner, s.metricsCollector, s.logger)
-	s.logger.Info("Performance monitor initialized successfully")
 
-	s.logger.Info("All components initialized successfully")
+	s.logger.Info("Components initialized")
 	return nil
 }
 
 // performHealthChecks performs initial health checks on all components
 func (s *Service) performHealthChecks(ctx context.Context) error {
-	s.logger.Info("Performing health checks")
-	
 	// Check Redis connectivity
-	s.logger.Debug("Checking Redis connectivity")
 	if err := s.redisManager.Ping(ctx); err != nil {
 		return fmt.Errorf("Redis health check failed: %w", err)
 	}
-	s.logger.Debug("Redis health check passed")
 	
 	// Additional health checks can be added here for other components
 	
-	s.logger.Info("All health checks passed")
 	return nil
 }
 
 // startServices starts all background services
 func (s *Service) startServices(ctx context.Context) error {
-	s.logger.Info("Starting background services")
-	
 	var wg sync.WaitGroup
-	errChan := make(chan error, 3) // Buffer for potential errors from 3 services
+	errChan := make(chan error, 4) // Buffer for potential errors from 4 services
 	
 	// Start metrics server if enabled
 	if s.cfg.MetricsEnabled && s.metricsServer != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.logger.Info("Starting metrics server", map[string]interface{}{
-				"port": s.cfg.MetricsPort,
-			})
 			if err := s.metricsServer.Start(ctx); err != nil {
 				s.logger.Error("Metrics server failed to start", map[string]interface{}{
 					"error": err.Error(),
@@ -263,7 +214,6 @@ func (s *Service) startServices(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		s.logger.Info("Starting Kafka consumer")
 		if err := s.kafkaConsumer.Start(ctx, s.blockAggregator); err != nil {
 			s.logger.Error("Kafka consumer failed", map[string]interface{}{
 				"error": err.Error(),
@@ -276,7 +226,6 @@ func (s *Service) startServices(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		s.logger.Info("Starting maintenance service")
 		if err := s.maintenanceService.Start(ctx); err != nil {
 			s.logger.Error("Maintenance service failed", map[string]interface{}{
 				"error": err.Error(),
@@ -289,7 +238,6 @@ func (s *Service) startServices(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		s.logger.Info("Starting performance monitor")
 		if err := s.performanceMonitor.Start(ctx); err != nil {
 			s.logger.Error("Performance monitor failed", map[string]interface{}{
 				"error": err.Error(),
@@ -309,7 +257,6 @@ func (s *Service) startServices(ctx context.Context) error {
 		// No immediate errors
 	}
 	
-	s.logger.Info("All background services started successfully")
 	return nil
 }
 

@@ -20,3 +20,20 @@ type TokenTradeHistory struct {
 	TransTime    string
 	TxHash       string
 }
+
+type TokenAggregateItem struct {
+	Type string
+	SellCount int
+	BuyCount int
+	TradeAmount int64
+	PriceChange float64
+}
+
+type TokenSniperITem struct {
+
+}
+
+type TokenAggregateData struct {
+	Token        string
+	AggregateData []TokenAggregateItem
+}
