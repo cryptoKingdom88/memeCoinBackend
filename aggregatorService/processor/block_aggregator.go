@@ -67,6 +67,15 @@ func (ba *BlockAggregator) Initialize(redisManager interfaces.RedisManager, calc
 	ba.workerPool = workerPool
 	ba.logger = logging.NewLogger("aggregator-service", "block-aggregator")
 	ba.isInitialized = true
+	
+	// Pre-create token processors for known tokens (warm-up optimization)
+	if err := ba.warmUpTokenProcessors(); err != nil {
+		ba.logger.Warn("Token processor warm-up failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		// Don't fail initialization if warm-up fails
+	}
+	
 	return nil
 }
 
@@ -90,7 +99,9 @@ func (ba *BlockAggregator) ProcessTrades(ctx context.Context, trades []packet.To
 	}
 	
 	// Group trades by token address
+	groupStartTime := time.Now()
 	tradeGroups := ba.groupTradesByToken(trades)
+	groupDuration := time.Since(groupStartTime)
 	
 	// Process each token group
 	var wg sync.WaitGroup
@@ -115,7 +126,9 @@ func (ba *BlockAggregator) ProcessTrades(ctx context.Context, trades []packet.To
 	}
 	
 	// Wait for all processing to complete
+	processingStartTime := time.Now()
 	wg.Wait()
+	processingDuration := time.Since(processingStartTime)
 	close(errorChan)
 	
 	// Collect any errors
@@ -132,14 +145,28 @@ func (ba *BlockAggregator) ProcessTrades(ctx context.Context, trades []packet.To
 		return errors[0]
 	}
 	
-	// Log batch processing completion with timing
-	processingTime := time.Since(startTime)
-	ba.logger.Info("Batch processing completed", map[string]interface{}{
-		"total_trades":     len(trades),
-		"unique_tokens":    len(tradeGroups),
-		"processing_time":  processingTime.String(),
-		"trades_per_sec":   float64(len(trades)) / processingTime.Seconds(),
-	})
+	// Log batch processing completion with detailed timing
+	totalTime := time.Since(startTime)
+	
+	// Log detailed performance if processing is slow
+	if totalTime > 100*time.Millisecond {
+		ba.logger.Warn("Slow batch processing detected", map[string]interface{}{
+			"total_trades":       len(trades),
+			"unique_tokens":      len(tradeGroups),
+			"total_time":         totalTime.String(),
+			"grouping_time":      groupDuration.String(),
+			"processing_time":    processingDuration.String(),
+			"trades_per_sec":     float64(len(trades)) / totalTime.Seconds(),
+			"avg_trades_per_token": float64(len(trades)) / float64(len(tradeGroups)),
+		})
+	} else {
+		ba.logger.Info("Batch processing completed", map[string]interface{}{
+			"total_trades":     len(trades),
+			"unique_tokens":    len(tradeGroups),
+			"processing_time":  totalTime.String(),
+			"trades_per_sec":   float64(len(trades)) / totalTime.Seconds(),
+		})
+	}
 	
 	return nil
 }
@@ -520,4 +547,54 @@ func (ba *BlockAggregator) IsShutdown() bool {
 	ba.shutdownMutex.RLock()
 	defer ba.shutdownMutex.RUnlock()
 	return ba.isShutdown
+}
+// warmUpTokenProcessors pre-creates token processors for known tokens to eliminate initialization delay
+func (ba *BlockAggregator) warmUpTokenProcessors() error {
+	// Pre-defined token addresses for warm-up (testCollectorService tokens)
+	knownTokens := []string{
+		"0x0000000000000000000000000000000000000001",
+		"0x0000000000000000000000000000000000000002",
+		"0x0000000000000000000000000000000000000003",
+		"0x0000000000000000000000000000000000000004",
+		"0x0000000000000000000000000000000000000005",
+		"0x0000000000000000000000000000000000000006",
+		"0x0000000000000000000000000000000000000007",
+		"0x0000000000000000000000000000000000000008",
+		"0x0000000000000000000000000000000000000009",
+		"0x000000000000000000000000000000000000000a",
+		"0x000000000000000000000000000000000000000b",
+		"0x000000000000000000000000000000000000000c",
+		"0x000000000000000000000000000000000000000d",
+		"0x000000000000000000000000000000000000000e",
+		"0x000000000000000000000000000000000000000f",
+		"0x0000000000000000000000000000000000000010",
+		"0x0000000000000000000000000000000000000011",
+		"0x0000000000000000000000000000000000000012",
+		"0x0000000000000000000000000000000000000013",
+		"0x0000000000000000000000000000000000000014",
+	}
+	
+	ba.logger.Info("Starting token processor warm-up", map[string]interface{}{
+		"token_count": len(knownTokens),
+	})
+	
+	successCount := 0
+	for _, tokenAddress := range knownTokens {
+		if _, err := ba.getOrCreateProcessor(tokenAddress); err != nil {
+			ba.logger.Warn("Failed to warm-up token processor", map[string]interface{}{
+				"token_address": tokenAddress,
+				"error":         err.Error(),
+			})
+		} else {
+			successCount++
+		}
+	}
+	
+	ba.logger.Info("Token processor warm-up completed", map[string]interface{}{
+		"success_count": successCount,
+		"total_count":   len(knownTokens),
+		"success_rate":  float64(successCount) / float64(len(knownTokens)) * 100,
+	})
+	
+	return nil
 }

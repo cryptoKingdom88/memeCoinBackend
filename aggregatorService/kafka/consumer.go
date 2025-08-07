@@ -154,9 +154,9 @@ func (c *Consumer) StopWithTimeout(timeout time.Duration) error {
 func (c *Consumer) consumeMessages(ctx context.Context, processor interfaces.BlockAggregator) {
 	log.Printf("Starting message consumption loop with batching")
 	
-	// Batching configuration
+	// Batching configuration - Optimized for lower latency
 	const (
-		maxBatchSize = 100                // Maximum messages per batch
+		maxBatchSize = 50                 // Reduced from 100 to 50 for lower latency
 		batchTimeout = 50 * time.Millisecond // Maximum time to wait for batch
 	)
 	
