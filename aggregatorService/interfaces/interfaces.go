@@ -100,13 +100,21 @@ type TokenProcessor interface {
 // BlockAggregator interface defines block-level trade aggregation
 type BlockAggregator interface {
 	// Initialize aggregator
-	Initialize(redisManager RedisManager, calculator SlidingWindowCalculator, workerPool WorkerPool) error
+	Initialize(redisManager RedisManager, calculator SlidingWindowCalculator, workerPool WorkerPool, kafkaProducer KafkaProducer) error
 	
 	// Process multiple trades (grouped by block)
 	ProcessTrades(ctx context.Context, trades []packet.TokenTradeHistory) error
 	
 	// Get or create token processor
 	GetTokenProcessor(tokenAddress string) (TokenProcessor, error)
+	
+	// Send aggregate results to Kafka
+	SendAggregateResults(ctx context.Context, tokenAddress string) error
+	SendBatchAggregateResults(ctx context.Context, tokenAddresses []string) error
+	SendAllActiveTokenAggregates(ctx context.Context) error
+	
+	// Schedule periodic aggregate publishing
+	SchedulePeriodicAggregatePublishing(ctx context.Context, interval time.Duration)
 	
 	// Shutdown all processors
 	Shutdown(ctx context.Context) error
@@ -174,4 +182,25 @@ type MetricsCollector interface {
 	
 	// Get current metrics
 	GetMetrics() map[string]interface{}
+}
+
+// KafkaProducer interface defines Kafka producer operations for aggregate data
+type KafkaProducer interface {
+	// Initialize producer
+	Initialize(brokers []string) error
+	
+	// Send aggregate data to Kafka
+	SendAggregateData(ctx context.Context, aggregateData *packet.TokenAggregateData) error
+	
+	// Send batch of aggregate data
+	SendBatchAggregateData(ctx context.Context, aggregateDataList []*packet.TokenAggregateData) error
+	
+	// Health check
+	HealthCheck(ctx context.Context) error
+	
+	// Get producer statistics
+	GetStats() map[string]interface{}
+	
+	// Close producer
+	Close() error
 }

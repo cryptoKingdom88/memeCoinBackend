@@ -31,6 +31,7 @@ type Service struct {
 	workerPool         interfaces.WorkerPool
 	blockAggregator    interfaces.BlockAggregator
 	kafkaConsumer      interfaces.KafkaConsumer
+	kafkaProducer      interfaces.KafkaProducer
 	maintenanceService interfaces.MaintenanceService
 	metricsCollector   interfaces.MetricsCollector
 	metricsServer      *metrics.Server
@@ -137,9 +138,15 @@ func (s *Service) initializeComponents(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize worker pool: %w", err)
 	}
 
+	// Initialize Kafka producer
+	s.kafkaProducer = kafka.NewProducer()
+	if err := s.kafkaProducer.Initialize(s.cfg.KafkaBrokers); err != nil {
+		return fmt.Errorf("failed to initialize Kafka producer: %w", err)
+	}
+
 	// Initialize block aggregator
 	s.blockAggregator = processor.NewBlockAggregator()
-	if err := s.blockAggregator.Initialize(s.redisManager, s.calculator, s.workerPool); err != nil {
+	if err := s.blockAggregator.Initialize(s.redisManager, s.calculator, s.workerPool, s.kafkaProducer); err != nil {
 		return fmt.Errorf("failed to initialize block aggregator: %w", err)
 	}
 
@@ -245,6 +252,9 @@ func (s *Service) startServices(ctx context.Context) error {
 			errChan <- fmt.Errorf("performance monitor failed: %w", err)
 		}
 	}()
+
+	// Start periodic aggregate publishing (every 30 seconds)
+	s.blockAggregator.SchedulePeriodicAggregatePublishing(ctx, 30*time.Second)
 	
 	// Wait a moment for services to start up
 	time.Sleep(100 * time.Millisecond)
@@ -383,6 +393,18 @@ func (s *Service) gracefulShutdown(ctx context.Context) {
 			})
 		} else {
 			s.logger.Info("Worker pool shutdown successfully")
+		}
+	}
+
+	// Close Kafka producer
+	if s.kafkaProducer != nil {
+		s.logger.Info("Closing Kafka producer")
+		if err := s.kafkaProducer.Close(); err != nil {
+			s.logger.Error("Error closing Kafka producer", map[string]interface{}{
+				"error": err.Error(),
+			})
+		} else {
+			s.logger.Info("Kafka producer closed successfully")
 		}
 	}
 

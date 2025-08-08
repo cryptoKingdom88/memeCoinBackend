@@ -15,9 +15,10 @@ import (
 
 // BlockAggregator implements initial trade grouping by token address
 type BlockAggregator struct {
-	redisManager interfaces.RedisManager
-	calculator   interfaces.SlidingWindowCalculator
-	workerPool   interfaces.WorkerPool
+	redisManager   interfaces.RedisManager
+	calculator     interfaces.SlidingWindowCalculator
+	workerPool     interfaces.WorkerPool
+	kafkaProducer  interfaces.KafkaProducer
 	
 	// Token processor management
 	tokenProcessors map[string]interfaces.TokenProcessor
@@ -44,7 +45,7 @@ func NewBlockAggregator() interfaces.BlockAggregator {
 }
 
 // Initialize initializes the block aggregator
-func (ba *BlockAggregator) Initialize(redisManager interfaces.RedisManager, calculator interfaces.SlidingWindowCalculator, workerPool interfaces.WorkerPool) error {
+func (ba *BlockAggregator) Initialize(redisManager interfaces.RedisManager, calculator interfaces.SlidingWindowCalculator, workerPool interfaces.WorkerPool, kafkaProducer interfaces.KafkaProducer) error {
 	ba.shutdownMutex.Lock()
 	defer ba.shutdownMutex.Unlock()
 	
@@ -61,10 +62,14 @@ func (ba *BlockAggregator) Initialize(redisManager interfaces.RedisManager, calc
 	if workerPool == nil {
 		return fmt.Errorf("worker pool cannot be nil")
 	}
+	if kafkaProducer == nil {
+		return fmt.Errorf("kafka producer cannot be nil")
+	}
 	
 	ba.redisManager = redisManager
 	ba.calculator = calculator
 	ba.workerPool = workerPool
+	ba.kafkaProducer = kafkaProducer
 	ba.logger = logging.NewLogger("aggregator-service", "block-aggregator")
 	ba.isInitialized = true
 	
@@ -597,4 +602,197 @@ func (ba *BlockAggregator) warmUpTokenProcessors() error {
 	})
 	
 	return nil
+}
+
+// SendAggregateResults sends aggregate results for a specific token to Kafka
+func (ba *BlockAggregator) SendAggregateResults(ctx context.Context, tokenAddress string) error {
+	ba.shutdownMutex.RLock()
+	if ba.isShutdown {
+		ba.shutdownMutex.RUnlock()
+		return fmt.Errorf("block aggregator is shut down")
+	}
+	ba.shutdownMutex.RUnlock()
+	
+	// Get token processor
+	processor, err := ba.GetTokenProcessor(tokenAddress)
+	if err != nil {
+		return fmt.Errorf("failed to get token processor: %w", err)
+	}
+	
+	// Get current aggregates
+	aggregates, err := processor.GetAggregates(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get aggregates: %w", err)
+	}
+	
+	if len(aggregates) == 0 {
+		ba.logger.Debug("No aggregates to send", map[string]interface{}{
+			"token": tokenAddress,
+		})
+		return nil
+	}
+	
+	// Convert to packet format
+	aggregateData := ba.convertToPacketFormat(tokenAddress, aggregates)
+	
+	// Send to Kafka
+	if err := ba.kafkaProducer.SendAggregateData(ctx, aggregateData); err != nil {
+		ba.logger.Error("Failed to send aggregate data to Kafka", map[string]interface{}{
+			"token": tokenAddress,
+			"error": err.Error(),
+		})
+		return fmt.Errorf("failed to send aggregate data: %w", err)
+	}
+	
+	ba.logger.Info("Aggregate data sent successfully", map[string]interface{}{
+		"token":       tokenAddress,
+		"data_points": len(aggregateData.AggregateData),
+	})
+	
+	return nil
+}
+
+// SendBatchAggregateResults sends aggregate results for multiple tokens to Kafka
+func (ba *BlockAggregator) SendBatchAggregateResults(ctx context.Context, tokenAddresses []string) error {
+	ba.shutdownMutex.RLock()
+	if ba.isShutdown {
+		ba.shutdownMutex.RUnlock()
+		return fmt.Errorf("block aggregator is shut down")
+	}
+	ba.shutdownMutex.RUnlock()
+	
+	if len(tokenAddresses) == 0 {
+		return nil
+	}
+	
+	var aggregateDataList []*packet.TokenAggregateData
+	
+	for _, tokenAddress := range tokenAddresses {
+		// Get token processor
+		processor, err := ba.GetTokenProcessor(tokenAddress)
+		if err != nil {
+			ba.logger.Warn("Failed to get token processor for batch", map[string]interface{}{
+				"token": tokenAddress,
+				"error": err.Error(),
+			})
+			continue
+		}
+		
+		// Get current aggregates
+		aggregates, err := processor.GetAggregates(ctx)
+		if err != nil {
+			ba.logger.Warn("Failed to get aggregates for batch", map[string]interface{}{
+				"token": tokenAddress,
+				"error": err.Error(),
+			})
+			continue
+		}
+		
+		if len(aggregates) == 0 {
+			continue
+		}
+		
+		// Convert to packet format
+		aggregateData := ba.convertToPacketFormat(tokenAddress, aggregates)
+		aggregateDataList = append(aggregateDataList, aggregateData)
+	}
+	
+	if len(aggregateDataList) == 0 {
+		ba.logger.Debug("No aggregate data to send in batch", map[string]interface{}{
+			"requested_tokens": len(tokenAddresses),
+		})
+		return nil
+	}
+	
+	// Send batch to Kafka
+	if err := ba.kafkaProducer.SendBatchAggregateData(ctx, aggregateDataList); err != nil {
+		ba.logger.Error("Failed to send batch aggregate data to Kafka", map[string]interface{}{
+			"batch_size": len(aggregateDataList),
+			"error":      err.Error(),
+		})
+		return fmt.Errorf("failed to send batch aggregate data: %w", err)
+	}
+	
+	ba.logger.Info("Batch aggregate data sent successfully", map[string]interface{}{
+		"batch_size":     len(aggregateDataList),
+		"total_tokens":   len(tokenAddresses),
+		"success_tokens": len(aggregateDataList),
+	})
+	
+	return nil
+}
+
+// SendAllActiveTokenAggregates sends aggregate results for all active tokens
+func (ba *BlockAggregator) SendAllActiveTokenAggregates(ctx context.Context) error {
+	activeTokens := ba.GetActiveTokens()
+	if len(activeTokens) == 0 {
+		ba.logger.Debug("No active tokens to send aggregates for", nil)
+		return nil
+	}
+	
+	return ba.SendBatchAggregateResults(ctx, activeTokens)
+}
+
+// convertToPacketFormat converts internal aggregate data to packet format
+func (ba *BlockAggregator) convertToPacketFormat(tokenAddress string, aggregates map[string]*models.AggregateData) *packet.TokenAggregateData {
+	aggregateItems := make([]packet.TokenAggregateItem, 0, len(aggregates))
+	
+	for timeWindow, aggregate := range aggregates {
+		if aggregate == nil {
+			continue
+		}
+		
+		// Convert types to match packet format
+		item := packet.TokenAggregateItem{
+			TimeWindow:  timeWindow,
+			SellCount:   int(aggregate.SellCount),
+			BuyCount:    int(aggregate.BuyCount),
+			TotalTrades: int(aggregate.SellCount + aggregate.BuyCount),
+			SellVolume:  fmt.Sprintf("%.6f", aggregate.SellVolume),
+			BuyVolume:   fmt.Sprintf("%.6f", aggregate.BuyVolume),
+			TotalVolume: fmt.Sprintf("%.6f", aggregate.TotalVolume),
+			VolumeUsd:   fmt.Sprintf("%.6f", aggregate.TotalVolume), // Using TotalVolume as USD volume
+			PriceChange: aggregate.PriceChange,
+			OpenPrice:   fmt.Sprintf("%.6f", aggregate.StartPrice),
+			ClosePrice:  fmt.Sprintf("%.6f", aggregate.EndPrice),
+			Timestamp:   aggregate.LastUpdate.Format(time.RFC3339),
+		}
+		
+		aggregateItems = append(aggregateItems, item)
+	}
+	
+	return &packet.TokenAggregateData{
+		Token:         tokenAddress,
+		Symbol:        "", // TODO: Get from token info if available
+		Name:          "", // TODO: Get from token info if available
+		AggregateData: aggregateItems,
+		GeneratedAt:   time.Now().Format(time.RFC3339),
+		Version:       "1.0",
+	}
+}
+
+// SchedulePeriodicAggregatePublishing starts a goroutine that periodically sends aggregate data
+func (ba *BlockAggregator) SchedulePeriodicAggregatePublishing(ctx context.Context, interval time.Duration) {
+	ba.logger.Info("Starting periodic aggregate publishing", map[string]interface{}{
+		"interval": interval.String(),
+	})
+	
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				ba.logger.Info("Stopping periodic aggregate publishing", nil)
+				return
+			case <-ticker.C:
+				if err := ba.SendAllActiveTokenAggregates(ctx); err != nil {
+					ba.logger.Error("Failed to send periodic aggregates", map[string]interface{}{
+						"error": err.Error(),
+					})
+				}
+			}
+		}
+	}()
 }

@@ -1,0 +1,79 @@
+{
+  "token": "0x0000000000000000000000000000000000000001",
+  "symbol": "",
+  "name": "",
+  "aggregate_data": [
+    {
+      "time_window": "1min",
+      "sell_count": 5,
+      "buy_count": 8,
+      "total_trades": 13,
+      "sell_volume": "1250.500000",
+      "buy_volume": "2100.750000",
+      "total_volume": "3351.250000",
+      "volume_usd": "3351.250000",
+      "price_change": 2.5,
+      "open_price": "0.000118",
+      "close_price": "0.000125",
+      "timestamp": "2025-01-08T10:30:00Z"
+    },
+    {
+      "time_window": "5min",
+      "sell_count": 25,
+      "buy_count": 32,
+      "total_trades": 57,
+      "sell_volume": "5200.250000",
+      "buy_volume": "7800.500000",
+      "total_volume": "13000.750000",
+      "volume_usd": "13000.750000",
+      "price_change": 5.2,
+      "open_price": "0.000115",
+      "close_price": "0.000125",
+      "timestamp": "2025-01-08T10:30:00Z"
+    },
+    {
+      "time_window": "15min",
+      "sell_count": 78,
+      "buy_count": 95,
+      "total_trades": 173,
+      "sell_volume": "15600.250000",
+      "buy_volume": "22400.750000",
+      "total_volume": "38001.000000",
+      "volume_usd": "38001.000000",
+      "price_change": 8.7,
+      "open_price": "0.000112",
+      "close_price": "0.000125",
+      "timestamp": "2025-01-08T10:30:00Z"
+    },
+    {
+      "time_window": "30min",
+      "sell_count": 156,
+      "buy_count": 189,
+      "total_trades": 345,
+      "sell_volume": "31200.500000",
+      "buy_volume": "44800.250000",
+      "total_volume": "76000.750000",
+      "volume_usd": "76000.750000",
+      "price_change": 12.3,
+      "open_price": "0.000110",
+      "close_price": "0.000125",
+      "timestamp": "2025-01-08T10:30:00Z"
+    },
+    {
+      "time_window": "1hour",
+      "sell_count": 312,
+      "buy_count": 378,
+      "total_trades": 690,
+      "sell_volume": "62400.750000",
+      "buy_volume": "89600.500000",
+      "total_volume": "152001.250000",
+      "volume_usd": "152001.250000",
+      "price_change": 15.8,
+      "open_price": "0.000108",
+      "close_price": "0.000125",
+      "timestamp": "2025-01-08T10:30:00Z"
+    }
+  ],
+  "generated_at": "2025-01-08T10:30:15Z",
+  "version": "1.0"
+}
