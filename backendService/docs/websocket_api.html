@@ -150,11 +150,13 @@
   "type": "token_info",
   "channel": "dashboard",
   "data": {
-    "token_address": "0x1234567890abcdef",
-    "symbol": "ETH",
-    "name": "Ethereum",
-    "price": 2500.50,
-    "market_cap": 300000000000
+    "Token": "0x0000000000000000000000000000000000000001",
+    "Symbol": "DOGCOI",
+    "Name": "DogeCoin",
+    "MetaInfo": "Initial price: $1.234567",
+    "TotalSupply": "5000000000",
+    "IsAMM": true,
+    "CreateTime": "2024-01-01T12:00:00Z"
   },
   "timestamp": "2024-01-01T12:00:00Z"
 }</code></pre>
@@ -167,11 +169,14 @@
   "type": "trade_data",
   "channel": "dashboard",
   "data": {
-    "token_address": "0x1234567890abcdef",
-    "price": 2500.50,
-    "volume": 1000.0,
-    "timestamp": "2024-01-01T12:00:00Z",
-    "tx_hash": "0xabcdef1234567890"
+    "Token": "0x0000000000000000000000000000000000000001",
+    "Wallet": "0x0000000000000000000000000000000000000400",
+    "SellBuy": "buy",
+    "NativeAmount": "1000.000000",
+    "TokenAmount": "2500.500000",
+    "PriceUsd": "0.400000",
+    "TransTime": "2024-01-01T12:00:00Z",
+    "TxHash": "0x1234567890abcdef1234567890abcdef12345678"
   },
   "timestamp": "2024-01-01T12:00:00Z"
 }</code></pre>
@@ -184,13 +189,27 @@
   "type": "aggregate_data",
   "channel": "dashboard",
   "data": {
-    "token_address": "0x1234567890abcdef",
-    "total_volume": 50000.0,
-    "average_price": 2500.50,
-    "trade_count": 100,
-    "time_window": "1h",
-    "window_start": "2024-01-01T12:00:00Z",
-    "window_end": "2024-01-01T13:00:00Z"
+    "token": "0x0000000000000000000000000000000000000001",
+    "symbol": "DOGCOI",
+    "name": "DogeCoin",
+    "aggregate_data": [
+      {
+        "time_window": "1min",
+        "sell_count": 15,
+        "buy_count": 20,
+        "total_trades": 35,
+        "sell_volume": "25000.000000",
+        "buy_volume": "30000.000000",
+        "total_volume": "55000.000000",
+        "volume_usd": "55000.000000",
+        "price_change": 2.5,
+        "open_price": "0.400000",
+        "close_price": "0.410000",
+        "timestamp": "2024-01-01T12:01:00Z"
+      }
+    ],
+    "generated_at": "2024-01-01T12:01:00Z",
+    "version": "1.0"
   },
   "timestamp": "2024-01-01T12:00:00Z"
 }</code></pre>
