@@ -4,11 +4,12 @@ A test service that generates random token trade data and sends it to Kafka for 
 
 ## Features
 
-- **20 Fixed Token Addresses**: Generates consistent token addresses for testing
+- **Progressive Token Launches**: Starts with a few tokens and launches new ones over time
+- **Realistic Token Launch Simulation**: Generates token info with names, symbols, and metadata
 - **Random Trade Generation**: Creates realistic trade data with price movements
 - **Configurable Parameters**: Adjustable trade frequency, amounts, and test duration
 - **Real-time Statistics**: Shows generation rates and current token prices
-- **Kafka Integration**: Sends data to the same topic used by the aggregator service
+- **Dual Kafka Topics**: Sends token launches to `token-info` and trades to `trade-info`
 
 ## Configuration
 
@@ -20,7 +21,9 @@ cp .env.example .env
 
 ### Key Parameters
 
-- `TOKEN_COUNT=20`: Number of different tokens to simulate
+- `TOKEN_COUNT=20`: Total number of different tokens to simulate
+- `INITIAL_TOKENS=3`: Number of tokens to start with
+- `TOKEN_LAUNCH_INTERVAL=10s`: Time between new token launches
 - `TRADES_PER_TOKEN=15`: Base number of trades per token per batch
 - `TRADE_VARIATION=10`: Random variation (±10, so 5-25 trades per token)
 - `BATCH_INTERVAL=200ms`: Time between batches (200ms as requested)
@@ -69,13 +72,17 @@ cd aggregatorService
 Starting Test Collector Service
 Configuration:
   Kafka Brokers: [localhost:9092]
-  Token Count: 20
+  Token Count: 20 (starting with 3)
+  Token Launch Interval: 10s
   Trades Per Token: 15 ± 10
   Batch Interval: 200ms
   ...
 
-Statistics: 3000 trades in 10 batches (150.0 trades/sec, 5.0 batches/sec)
-Sample token prices:
+🚀 New token launched: DogeCoin (DOGCOI) - Active tokens: 4/20
+🚀 New token launched: PepeMars (PEPMAR) - Active tokens: 5/20
+
+Statistics: 1500 trades in 10 batches (150.0 trades/sec, 5.0 batches/sec) - Active tokens: 5/20
+Sample active token prices:
   0x0000000000000000000000000000000000000001: $0.123456
   0x0000000000000000000000000000000000000002: $2.345678
   ...
@@ -108,21 +115,46 @@ export MAX_PRICE=100.0
 export BUY_PROBABILITY=0.3  # More selling pressure
 ```
 
-## Monitoring
+## Progressive Token Launch Simulation
 
-The test generates approximately:
-- **Base Load**: 20 tokens × 15 trades × 5 batches/sec = 1,500 trades/sec
-- **With Variation**: 20 tokens × (5-25) trades × 5 batches/sec = 500-2,500 trades/sec
-- **Per Token**: 75-125 trades per token per second
+The service simulates a realistic token launch scenario:
 
-This should provide a good stress test for the aggregator service's sliding window calculations.
+1. **Initial Phase**: Starts with `INITIAL_TOKENS` (default: 3) active tokens
+2. **Launch Phase**: Every `TOKEN_LAUNCH_INTERVAL` (default: 10s), launches a new token
+3. **Mature Phase**: Once all tokens are launched, continues trading with all tokens
 
-## Token Addresses Used
+### Trade Volume Progression
 
-The service generates 20 fixed token addresses:
-- `0x0000000000000000000000000000000000000001`
-- `0x0000000000000000000000000000000000000002`
-- ...
-- `0x0000000000000000000000000000000000000014` (20th token)
+- **Start**: 3 tokens × 15 trades × 5 batches/sec = 225 trades/sec
+- **Mid-test**: 10 tokens × 15 trades × 5 batches/sec = 750 trades/sec  
+- **Full capacity**: 20 tokens × 15 trades × 5 batches/sec = 1,500 trades/sec
+- **With variation**: Up to 20 tokens × 25 trades × 5 batches/sec = 2,500 trades/sec
 
-These addresses are consistent across runs for predictable testing.
+This progressive approach provides:
+- **Realistic simulation** of new token launches
+- **Gradual load increase** for testing system scalability
+- **Token lifecycle testing** from launch to mature trading
+
+## Token Information Generated
+
+Each launched token includes:
+- **Unique address**: `0x0000...0001`, `0x0000...0002`, etc.
+- **Meme-style names**: "DogeCoin", "PepeMars", "ShibaFloki", etc.
+- **Symbols**: Derived from names (e.g., "DOGCOI", "PEPMAR")
+- **Metadata**: Initial price and launch information
+- **Supply**: Random between 1B-10B tokens
+- **Launch timestamp**: Exact time of token creation
+
+## Quick Test
+
+Run a 60-second test with progressive token launches:
+
+```bash
+./scripts/quick_test.sh
+```
+
+This will:
+- Start with 2 tokens
+- Launch a new token every 5 seconds
+- Run for 60 seconds total
+- Show token launch events with 🚀 emoji

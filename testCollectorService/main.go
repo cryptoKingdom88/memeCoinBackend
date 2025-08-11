@@ -37,16 +37,17 @@ func main() {
 	
 	// Create trade generator
 	tradeGen := generator.NewTradeGenerator(cfg)
-	log.Printf("Initialized trade generator with %d tokens", len(tradeGen.GetTokenAddresses()))
+	log.Printf("Initialized trade generator with %d initial tokens (total: %d)", 
+		tradeGen.GetActiveTokenCount(), tradeGen.GetTotalTokenCount())
 	
-	// Print token addresses
-	log.Println("Token addresses:")
+	// Print initial active token addresses
+	log.Println("Initial active token addresses:")
 	for i, addr := range tradeGen.GetTokenAddresses() {
 		log.Printf("  %d: %s", i+1, addr)
 	}
 	
 	// Create Kafka producer
-	producer := kafka.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopic)
+	producer := kafka.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopic, cfg.TokenInfoTopic)
 	defer producer.Close()
 	
 	// Setup signal handling for graceful shutdown
@@ -65,6 +66,10 @@ func main() {
 	ticker := time.NewTicker(cfg.BatchInterval)
 	defer ticker.Stop()
 	
+	// Create ticker for token launches
+	tokenLaunchTicker := time.NewTicker(cfg.TokenLaunchInterval)
+	defer tokenLaunchTicker.Stop()
+	
 	// Create timer for test duration
 	testTimer := time.NewTimer(cfg.TestDuration)
 	defer testTimer.Stop()
@@ -77,17 +82,41 @@ func main() {
 		select {
 		case <-ctx.Done():
 			log.Println("Context cancelled, stopping...")
+			printFinalStats(totalTrades, totalBatches, startTime)
 			return
 			
 		case <-sigChan:
 			log.Println("Received shutdown signal, stopping...")
 			cancel()
+			printFinalStats(totalTrades, totalBatches, startTime)
 			return
 			
 		case <-testTimer.C:
 			log.Printf("Test duration completed (%s), stopping...", cfg.TestDuration)
 			cancel()
+			printFinalStats(totalTrades, totalBatches, startTime)
 			return
+			
+		case <-tokenLaunchTicker.C:
+			// Launch new token if available
+			if tradeGen.HasMoreTokensToLaunch() {
+				tokenInfo := tradeGen.LaunchNewToken()
+				if tokenInfo != nil {
+					err := producer.SendTokenInfo(ctx, tokenInfo)
+					if err != nil {
+						log.Printf("Error sending token info: %v", err)
+					} else {
+						log.Printf("🚀 New token launched: %s (%s) - Active tokens: %d/%d", 
+							tokenInfo.Name, tokenInfo.Symbol, 
+							tradeGen.GetActiveTokenCount(), 
+							tradeGen.GetTotalTokenCount())
+					}
+				}
+			} else {
+				// Stop token launch ticker when all tokens are launched
+				tokenLaunchTicker.Stop()
+				log.Printf("All %d tokens have been launched!", tradeGen.GetTotalTokenCount())
+			}
 			
 		case <-statsTicker.C:
 			// Print statistics
@@ -95,12 +124,13 @@ func main() {
 			tradesPerSecond := float64(totalTrades) / elapsed.Seconds()
 			batchesPerSecond := float64(totalBatches) / elapsed.Seconds()
 			
-			log.Printf("Statistics: %d trades in %d batches (%.1f trades/sec, %.1f batches/sec)", 
-				totalTrades, totalBatches, tradesPerSecond, batchesPerSecond)
+			log.Printf("Statistics: %d trades in %d batches (%.1f trades/sec, %.1f batches/sec) - Active tokens: %d/%d", 
+				totalTrades, totalBatches, tradesPerSecond, batchesPerSecond,
+				tradeGen.GetActiveTokenCount(), tradeGen.GetTotalTokenCount())
 			
-			// Print current token prices
+			// Print current token prices for active tokens
 			prices := tradeGen.GetCurrentPrices()
-			log.Printf("Sample token prices:")
+			log.Printf("Sample active token prices:")
 			count := 0
 			for token, price := range prices {
 				if count < 5 { // Show first 5 tokens
@@ -110,7 +140,7 @@ func main() {
 			}
 			
 		case <-ticker.C:
-			// Generate and send batch
+			// Generate and send batch for active tokens only
 			trades := tradeGen.GenerateBatch()
 			
 			if len(trades) > 0 {
@@ -129,7 +159,7 @@ func main() {
 					tokenCounts[trade.Token]++
 				}
 				
-				log.Printf("Batch %d: %d trades across %d tokens", 
+				log.Printf("Batch %d: %d trades across %d active tokens", 
 					totalBatches, len(trades), len(tokenCounts))
 			}
 		}
@@ -148,5 +178,7 @@ func printFinalStats(totalTrades, totalBatches int64, startTime time.Time) {
 	log.Printf("Total Batches: %d", totalBatches)
 	log.Printf("Average Trades per Second: %.2f", tradesPerSecond)
 	log.Printf("Average Batches per Second: %.2f", batchesPerSecond)
-	log.Printf("Average Trades per Batch: %.2f", float64(totalTrades)/float64(totalBatches))
+	if totalBatches > 0 {
+		log.Printf("Average Trades per Batch: %.2f", float64(totalTrades)/float64(totalBatches))
+	}
 }
