@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket API Documentation</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #34495e;
+            margin-top: 30px;
+        }
+        h3 {
+            color: #7f8c8d;
+        }
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Consolas', monospace;
+        }
+        pre {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 15px 0;
+        }
+        pre code {
+            background: none;
+            padding: 0;
+            color: inherit;
+        }
+        .endpoint {
+            background: #e8f5e8;
+            padding: 10px;
+            border-left: 4px solid #27ae60;
+            margin: 10px 0;
+        }
+        .message-type {
+            background: #e3f2fd;
+            padding: 15px;
+            border-left: 4px solid #2196f3;
+            margin: 15px 0;
+        }
+        .nav {
+            background: #34495e;
+            padding: 15px;
+            margin: -30px -30px 30px -30px;
+            border-radius: 8px 8px 0 0;
+        }
+        .nav a {
+            color: #ecf0f1;
+            text-decoration: none;
+            margin-right: 20px;
+            padding: 8px 15px;
+            border-radius: 4px;
+            transition: background 0.3s;
+        }
+        .nav a:hover {
+            background: #2c3e50;
+        }
+        .example {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav">
+            <a href="/docs/">REST API Docs</a>
+            <a href="/websocket-docs/websocket_api.html">WebSocket API</a>
+            <a href="/health">Health Check</a>
+        </div>
+
+        <h1>WebSocket API Documentation</h1>
+
+        <h2>Overview</h2>
+        <p>The Backend WebSocket Service provides real-time cryptocurrency data streaming through WebSocket connections. Clients can subscribe to the "dashboard" channel to receive live updates about token information, trade data, and aggregated metrics.</p>
+
+        <h2>Connection</h2>
+        <div class="endpoint">
+            <strong>Endpoint:</strong> <code>ws://localhost:8080/ws</code><br>
+            <strong>Protocol:</strong> WebSocket (RFC 6455)<br>
+            <strong>Format:</strong> JSON messages with UTF-8 encoding
+        </div>
+
+        <h2>Quick Start</h2>
+        <div class="example">
+            <h3>1. Connect to WebSocket</h3>
+            <pre><code>const ws = new WebSocket('ws://localhost:8080/ws');</code></pre>
+
+            <h3>2. Subscribe to Dashboard</h3>
+            <pre><code>ws.send(JSON.stringify({
+    "type": "subscribe",
+    "channel": "dashboard"
+}));</code></pre>
+
+            <h3>3. Receive Real-time Data</h3>
+            <pre><code>ws.onmessage = function(event) {
+    const message = JSON.parse(event.data);
+    console.log('Received:', message.type, message.data);
+};</code></pre>
+        </div>
+
+        <h2>Message Types</h2>
+
+        <div class="message-type">
+            <h3>Token Information (<code>token_info</code>)</h3>
+            <p>Broadcasted when new token information is available.</p>
+            <pre><code>{
+  "type": "token_info",
+  "channel": "dashboard",
+  "data": {
+    "token_address": "0x1234567890abcdef",
+    "symbol": "ETH",
+    "name": "Ethereum",
+    "price": 2500.50,
+    "market_cap": 300000000000
+  },
+  "timestamp": "2024-01-01T12:00:00Z"
+}</code></pre>
+        </div>
+
+        <div class="message-type">
+            <h3>Trade Data (<code>trade_data</code>)</h3>
+            <p>Broadcasted for each new trade transaction.</p>
+            <pre><code>{
+  "type": "trade_data",
+  "channel": "dashboard",
+  "data": {
+    "token_address": "0x1234567890abcdef",
+    "price": 2500.50,
+    "volume": 1000.0,
+    "timestamp": "2024-01-01T12:00:00Z",
+    "tx_hash": "0xabcdef1234567890"
+  },
+  "timestamp": "2024-01-01T12:00:00Z"
+}</code></pre>
+        </div>
+
+        <div class="message-type">
+            <h3>Aggregate Data (<code>aggregate_data</code>)</h3>
+            <p>Broadcasted with aggregated trading metrics over time windows.</p>
+            <pre><code>{
+  "type": "aggregate_data",
+  "channel": "dashboard",
+  "data": {
+    "token_address": "0x1234567890abcdef",
+    "total_volume": 50000.0,
+    "average_price": 2500.50,
+    "trade_count": 100,
+    "time_window": "1h",
+    "window_start": "2024-01-01T12:00:00Z",
+    "window_end": "2024-01-01T13:00:00Z"
+  },
+  "timestamp": "2024-01-01T12:00:00Z"
+}</code></pre>
+        </div>
+
+        <h2>Client Examples</h2>
+
+        <h3>JavaScript/Browser</h3>
+        <pre><code>const ws = new WebSocket('ws://localhost:8080/ws');
+
+ws.onopen = function() {
+    console.log('Connected to WebSocket');
+    ws.send(JSON.stringify({
+        type: 'subscribe',
+        channel: 'dashboard'
+    }));
+};
+
+ws.onmessage = function(event) {
+    const message = JSON.parse(event.data);
+    switch(message.type) {
+        case 'token_info':
+            handleTokenInfo(message.data);
+            break;
+        case 'trade_data':
+            handleTradeData(message.data);
+            break;
+        case 'aggregate_data':
+            handleAggregateData(message.data);
+            break;
+    }
+};</code></pre>
+
+        <h3>Python</h3>
+        <pre><code>import asyncio
+import websockets
+import json
+
+async def client():
+    uri = "ws://localhost:8080/ws"
+    async with websockets.connect(uri) as websocket:
+        await websocket.send(json.dumps({
+            "type": "subscribe",
+            "channel": "dashboard"
+        }))
+        
+        async for message in websocket:
+            data = json.loads(message)
+            print(f"Received: {data['type']}", data['data'])
+
+asyncio.run(client())</code></pre>
+
+        <h2>Error Handling</h2>
+        <table>
+            <tr>
+                <th>Error Type</th>
+                <th>Description</th>
+                <th>Response</th>
+            </tr>
+            <tr>
+                <td>Invalid Channel</td>
+                <td>Subscription to unsupported channel</td>
+                <td><code>{"error": "Invalid subscription channel", "code": 400}</code></td>
+            </tr>
+            <tr>
+                <td>Connection Lost</td>
+                <td>Client disconnected unexpectedly</td>
+                <td>Automatic cleanup, no response</td>
+            </tr>
+            <tr>
+                <td>Invalid JSON</td>
+                <td>Malformed message sent to server</td>
+                <td>Error message sent to client</td>
+            </tr>
+        </table>
+
+        <h2>Performance & Limits</h2>
+        <ul>
+            <li><strong>Maximum Clients:</strong> 1000 concurrent connections</li>
+            <li><strong>Message Buffer:</strong> 100 messages per client</li>
+            <li><strong>Supported Channels:</strong> "dashboard" only</li>
+            <li><strong>Message Rate:</strong> No explicit rate limiting</li>
+        </ul>
+
+        <h2>Testing</h2>
+        <p>You can test the WebSocket connection using browser developer tools or online WebSocket testing tools:</p>
+        <div class="example">
+            <p><strong>Test URL:</strong> <code>ws://localhost:8080/ws</code></p>
+            <p><strong>Test Message:</strong> <code>{"type": "subscribe", "channel": "dashboard"}</code></p>
+        </div>
+    </div>
+</body>
+</html>

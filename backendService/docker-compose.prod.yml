@@ -1,0 +1,48 @@
+version: '3.8'
+
+# Production override for docker-compose.yml
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
+
+services:
+  backend-websocket:
+    # Production optimizations
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    
+    # Production environment variables
+    environment:
+      - LOG_LEVEL=WARN
+      - MAX_CLIENTS=2000
+      - MESSAGE_BUFFER_SIZE=200
+      - KAFKA_BATCH_SIZE=200
+    
+    # Production logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Remove Kafka dependencies for production (external Kafka)
+    depends_on: []
+
+  # Remove development Kafka services in production
+  zookeeper:
+    deploy:
+      replicas: 0
+
+  kafka:
+    deploy:
+      replicas: 0

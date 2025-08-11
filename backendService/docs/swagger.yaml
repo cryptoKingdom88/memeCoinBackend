@@ -1,0 +1,95 @@
+basePath: /
+definitions:
+  main.HealthResponse:
+    properties:
+      channels:
+        example:
+        - dashboard
+        items:
+          type: string
+        type: array
+      clients:
+        example: 5
+        type: integer
+      status:
+        example: healthy
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@swagger.io
+    name: API Support
+    url: http://www.swagger.io/support
+  description: A WebSocket server that bridges Kafka data streams with frontend clients
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  termsOfService: http://swagger.io/terms/
+  title: Backend WebSocket Service API
+  version: "1.0"
+paths:
+  /health:
+    get:
+      consumes:
+      - application/json
+      description: Get the current health status of the WebSocket service
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.HealthResponse'
+      summary: Health check endpoint
+      tags:
+      - health
+  /ws:
+    get:
+      consumes:
+      - application/json
+      description: Upgrade HTTP connection to WebSocket for real-time data streaming
+      parameters:
+      - default: websocket
+        description: Upgrade header
+        in: header
+        name: Upgrade
+        required: true
+        type: string
+      - default: Upgrade
+        description: Connection header
+        in: header
+        name: Connection
+        required: true
+        type: string
+      - description: WebSocket key
+        in: header
+        name: Sec-WebSocket-Key
+        required: true
+        type: string
+      - default: "13"
+        description: WebSocket version
+        in: header
+        name: Sec-WebSocket-Version
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "101":
+          description: Switching Protocols
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: WebSocket connection endpoint
+      tags:
+      - websocket
+schemes:
+- http
+- ws
+swagger: "2.0"
