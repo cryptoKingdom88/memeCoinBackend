@@ -74,13 +74,9 @@ func (ba *BlockAggregator) Initialize(redisManager interfaces.RedisManager, calc
 	ba.logger = logging.NewLogger("aggregator-service", "block-aggregator")
 	ba.isInitialized = true
 
-	// Pre-create token processors for known tokens (warm-up optimization)
-	if err := ba.warmUpTokenProcessors(); err != nil {
-		ba.logger.Warn("Token processor warm-up failed", map[string]interface{}{
-			"error": err.Error(),
-		})
-		// Don't fail initialization if warm-up fails
-	}
+	ba.logger.Info("BlockAggregator initialized successfully", map[string]interface{}{
+		"max_processors": ba.maxTokenProcessors,
+	})
 
 	return nil
 }
@@ -337,7 +333,7 @@ func (ba *BlockAggregator) getOrCreateProcessor(tokenAddress string) (interfaces
 	// Store processor
 	ba.tokenProcessors[tokenAddress] = processor
 
-	log.Printf("Created new TokenProcessor for token %s (total processors: %d)", tokenAddress, len(ba.tokenProcessors))
+	// log.Printf("Created new TokenProcessor for token %s (total processors: %d)", tokenAddress, len(ba.tokenProcessors))
 	return processor, nil
 }
 
@@ -553,57 +549,6 @@ func (ba *BlockAggregator) IsShutdown() bool {
 	ba.shutdownMutex.RLock()
 	defer ba.shutdownMutex.RUnlock()
 	return ba.isShutdown
-}
-
-// warmUpTokenProcessors pre-creates token processors for known tokens to eliminate initialization delay
-func (ba *BlockAggregator) warmUpTokenProcessors() error {
-	// Pre-defined token addresses for warm-up (testCollectorService tokens)
-	knownTokens := []string{
-		"0x0000000000000000000000000000000000000001",
-		"0x0000000000000000000000000000000000000002",
-		"0x0000000000000000000000000000000000000003",
-		"0x0000000000000000000000000000000000000004",
-		"0x0000000000000000000000000000000000000005",
-		"0x0000000000000000000000000000000000000006",
-		"0x0000000000000000000000000000000000000007",
-		"0x0000000000000000000000000000000000000008",
-		"0x0000000000000000000000000000000000000009",
-		"0x000000000000000000000000000000000000000a",
-		"0x000000000000000000000000000000000000000b",
-		"0x000000000000000000000000000000000000000c",
-		"0x000000000000000000000000000000000000000d",
-		"0x000000000000000000000000000000000000000e",
-		"0x000000000000000000000000000000000000000f",
-		"0x0000000000000000000000000000000000000010",
-		"0x0000000000000000000000000000000000000011",
-		"0x0000000000000000000000000000000000000012",
-		"0x0000000000000000000000000000000000000013",
-		"0x0000000000000000000000000000000000000014",
-	}
-
-	ba.logger.Info("Starting token processor warm-up", map[string]interface{}{
-		"token_count": len(knownTokens),
-	})
-
-	successCount := 0
-	for _, tokenAddress := range knownTokens {
-		if _, err := ba.getOrCreateProcessor(tokenAddress); err != nil {
-			ba.logger.Warn("Failed to warm-up token processor", map[string]interface{}{
-				"token_address": tokenAddress,
-				"error":         err.Error(),
-			})
-		} else {
-			successCount++
-		}
-	}
-
-	ba.logger.Info("Token processor warm-up completed", map[string]interface{}{
-		"success_count": successCount,
-		"total_count":   len(knownTokens),
-		"success_rate":  float64(successCount) / float64(len(knownTokens)) * 100,
-	})
-
-	return nil
 }
 
 // SendAggregateResults sends aggregate results for a specific token to Kafka
