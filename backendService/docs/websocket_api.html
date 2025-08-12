@@ -145,10 +145,13 @@
 
         <div class="message-type">
             <h3>Token Information (<code>token_info</code>)</h3>
-            <p>Broadcasted when new token information is available.</p>
+            <p>Broadcasted when new token information is available. The <code>category</code> field indicates whether it's a newly launched token or a trending token.</p>
+            
+            <h4>New Token Launch</h4>
             <pre><code>{
   "type": "token_info",
   "channel": "dashboard",
+  "category": "new_token",
   "data": {
     "Token": "0x0000000000000000000000000000000000000001",
     "Symbol": "DOGCOI",
@@ -160,11 +163,29 @@
   },
   "timestamp": "2024-01-01T12:00:00Z"
 }</code></pre>
+
+            <h4>Trending Token Entry</h4>
+            <pre><code>{
+  "type": "token_info",
+  "channel": "dashboard",
+  "category": "trending_token",
+  "data": {
+    "Token": "0x0000000000000000000000000000000000000002",
+    "Symbol": "HOTCOIN",
+    "Name": "HotCoin",
+    "MetaInfo": "High price movement detected",
+    "TotalSupply": "2000000000",
+    "IsAMM": true,
+    "CreateTime": "2024-01-01T11:50:00Z"
+  },
+  "timestamp": "2024-01-01T12:00:00Z"
+}</code></pre>
         </div>
 
         <div class="message-type">
             <h3>Trade Data (<code>trade_data</code>)</h3>
-            <p>Broadcasted for each new trade transaction.</p>
+            <p>Broadcasted for trade transactions of relevant tokens only (new tokens and trending tokens).</p>
+            <p><strong>Note:</strong> Only trades for tokens in the "new tokens" (latest 30) or "trending tokens" (top 30 by price) lists are broadcasted to optimize bandwidth and client memory usage.</p>
             <pre><code>{
   "type": "trade_data",
   "channel": "dashboard",
@@ -184,7 +205,8 @@
 
         <div class="message-type">
             <h3>Aggregate Data (<code>aggregate_data</code>)</h3>
-            <p>Broadcasted with aggregated trading metrics over time windows.</p>
+            <p>Broadcasted with aggregated trading metrics over time windows for relevant tokens only.</p>
+            <p><strong>Note:</strong> Only aggregate data for tokens in the "new tokens" or "trending tokens" lists are broadcasted.</p>
             <pre><code>{
   "type": "aggregate_data",
   "channel": "dashboard",
@@ -261,6 +283,39 @@ async def client():
             print(f"Received: {data['type']}", data['data'])
 
 asyncio.run(client())</code></pre>
+
+        <h2>Token Management & Filtering</h2>
+        
+        <p>The service implements intelligent token filtering to optimize bandwidth and client memory usage:</p>
+        
+        <h3>Token Categories</h3>
+        <ul>
+            <li><strong>New Tokens</strong>: Latest 30 tokens launched (configurable via <code>NEW_TOKENS_CACHE_SIZE</code>)</li>
+            <li><strong>Trending Tokens</strong>: Top 30 tokens by current price (configurable via <code>TRENDING_TOKENS_CACHE_SIZE</code>)</li>
+        </ul>
+        
+        <h3>Data Filtering Rules</h3>
+        <ul>
+            <li><strong>Token Info</strong>: All new token launches are broadcasted immediately with <code>category: "new_token"</code></li>
+            <li><strong>Trending Detection</strong>: When a token's price qualifies for trending status, it's broadcasted with <code>category: "trending_token"</code></li>
+            <li><strong>Trade Data</strong>: Only trades for tokens in the new or trending lists are broadcasted</li>
+            <li><strong>Aggregate Data</strong>: Only aggregates for tokens in the new or trending lists are broadcasted</li>
+        </ul>
+        
+        <h3>Caching Strategy</h3>
+        <ul>
+            <li><strong>Redis Cache</strong>: Token information cached for 10 minutes (configurable via <code>TOKEN_CACHE_TTL_MINUTES</code>)</li>
+            <li><strong>Memory Cache</strong>: Fast access to new and trending token lists</li>
+            <li><strong>Database Fallback</strong>: Automatic fallback to database when Redis is unavailable</li>
+        </ul>
+        
+        <h3>Benefits</h3>
+        <ul>
+            <li><strong>Reduced Bandwidth</strong>: Only relevant token data is transmitted</li>
+            <li><strong>Lower Memory Usage</strong>: Clients only need to cache ~60 tokens instead of all tokens</li>
+            <li><strong>Real-time Trending</strong>: Dynamic trending detection based on price movements</li>
+            <li><strong>Scalable</strong>: Configurable cache sizes for different deployment scenarios</li>
+        </ul>
 
         <h2>Error Handling</h2>
         <table>

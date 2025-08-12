@@ -24,6 +24,23 @@ type Config struct {
 	MessageBufferSize int
 	KafkaBatchSize    int
 
+	// Token Management Configuration
+	NewTokensCacheSize      int
+	TrendingTokensCacheSize int
+	TokenCacheTTLMinutes    int
+
+	// Redis Configuration
+	RedisAddr     string
+	RedisPassword string
+	RedisDB       int
+
+	// Database Configuration (fallback)
+	DBHost     string
+	DBPort     int
+	DBName     string
+	DBUser     string
+	DBPassword string
+
 	// Logging Configuration
 	LogLevel  string
 	LogFormat string
@@ -44,8 +61,27 @@ func Load() *Config {
 		MaxClients:         getEnvAsInt("MAX_CLIENTS", 1000),
 		MessageBufferSize:  getEnvAsInt("MESSAGE_BUFFER_SIZE", 100),
 		KafkaBatchSize:     getEnvAsInt("KAFKA_BATCH_SIZE", 100),
-		LogLevel:           getEnv("LOG_LEVEL", "INFO"),
-		LogFormat:          getEnv("LOG_FORMAT", "json"),
+		
+		// Token Management Configuration
+		NewTokensCacheSize:      getEnvAsInt("NEW_TOKENS_CACHE_SIZE", 30),
+		TrendingTokensCacheSize: getEnvAsInt("TRENDING_TOKENS_CACHE_SIZE", 30),
+		TokenCacheTTLMinutes:    getEnvAsInt("TOKEN_CACHE_TTL_MINUTES", 10),
+		
+		// Redis Configuration
+		RedisAddr:     getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword: getEnv("REDIS_PASSWORD", ""),
+		RedisDB:       getEnvAsInt("REDIS_DB", 0),
+		
+		// Database Configuration
+		DBHost:     getEnv("DB_HOST", "localhost"),
+		DBPort:     getEnvAsInt("DB_PORT", 5432),
+		DBName:     getEnv("DB_NAME", "memecoin"),
+		DBUser:     getEnv("DB_USER", "postgres"),
+		DBPassword: getEnv("DB_PASSWORD", "password"),
+		
+		// Logging Configuration
+		LogLevel:  getEnv("LOG_LEVEL", "INFO"),
+		LogFormat: getEnv("LOG_FORMAT", "json"),
 	}
 }
 

@@ -20,5 +20,22 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      # Default topic configurations for TTL
+      KAFKA_LOG_RETENTION_MS: 20000
+      KAFKA_LOG_SEGMENT_MS: 5000
+      KAFKA_LOG_CLEANUP_POLICY: delete
+      KAFKA_LOG_DELETE_DELAY_MS: 1000
     depends_on:
       - zookeeper
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:

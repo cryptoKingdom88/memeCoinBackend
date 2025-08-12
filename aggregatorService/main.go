@@ -37,12 +37,12 @@ type Service struct {
 	metricsServer      *metrics.Server
 	performanceTuner   *performance.PerformanceTuner
 	performanceMonitor *performance.Monitor
-	
+
 	// Service state
-	started    bool
-	healthy    bool
-	startTime  time.Time
-	mu         sync.RWMutex
+	started   bool
+	healthy   bool
+	startTime time.Time
+	mu        sync.RWMutex
 }
 
 func main() {
@@ -50,20 +50,20 @@ func main() {
 	service := &Service{
 		startTime: time.Now(),
 	}
-	
+
 	// Initialize logger first
 	service.logger = logging.NewLogger("aggregator-service", "main")
 	service.logger.Info("Starting Aggregator Service")
-	
+
 	// Load configuration
 	cfg := config.LoadConfig()
 	service.cfg = cfg
 	service.logger.Info("Configuration loaded", map[string]interface{}{
-		"kafka_topic":    cfg.KafkaTopic,
-		"time_windows":   len(cfg.TimeWindows),
-		"max_workers":    cfg.MaxWorkers,
+		"kafka_topic":  cfg.KafkaTopic,
+		"time_windows": len(cfg.TimeWindows),
+		"max_workers":  cfg.MaxWorkers,
 	})
-	
+
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -105,13 +105,13 @@ func main() {
 	// Graceful shutdown
 	service.logger.Info("Initiating graceful shutdown")
 	shutdownStart := time.Now()
-	
+
 	service.mu.Lock()
 	service.healthy = false
 	service.mu.Unlock()
-	
+
 	service.gracefulShutdown(ctx)
-	
+
 	service.logger.Info("Service shutdown complete", map[string]interface{}{
 		"shutdown_duration": time.Since(shutdownStart).String(),
 		"total_uptime":      time.Since(service.startTime).String(),
@@ -192,9 +192,9 @@ func (s *Service) performHealthChecks(ctx context.Context) error {
 	if err := s.redisManager.Ping(ctx); err != nil {
 		return fmt.Errorf("Redis health check failed: %w", err)
 	}
-	
+
 	// Additional health checks can be added here for other components
-	
+
 	return nil
 }
 
@@ -202,7 +202,7 @@ func (s *Service) performHealthChecks(ctx context.Context) error {
 func (s *Service) startServices(ctx context.Context) error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, 4) // Buffer for potential errors from 4 services
-	
+
 	// Start metrics server if enabled
 	if s.cfg.MetricsEnabled && s.metricsServer != nil {
 		wg.Add(1)
@@ -216,7 +216,7 @@ func (s *Service) startServices(ctx context.Context) error {
 			}
 		}()
 	}
-	
+
 	// Start Kafka consumer
 	wg.Add(1)
 	go func() {
@@ -255,10 +255,10 @@ func (s *Service) startServices(ctx context.Context) error {
 
 	// Start periodic aggregate publishing (every 30 seconds)
 	s.blockAggregator.SchedulePeriodicAggregatePublishing(ctx, 30*time.Second)
-	
+
 	// Wait a moment for services to start up
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Check for immediate startup errors
 	select {
 	case err := <-errChan:
@@ -266,7 +266,7 @@ func (s *Service) startServices(ctx context.Context) error {
 	default:
 		// No immediate errors
 	}
-	
+
 	return nil
 }
 
@@ -274,7 +274,7 @@ func (s *Service) startServices(ctx context.Context) error {
 func (s *Service) waitForShutdown(ctx context.Context, cancel context.CancelFunc) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-	
+
 	select {
 	case sig := <-sigChan:
 		s.logger.Info("Received shutdown signal", map[string]interface{}{
@@ -288,12 +288,12 @@ func (s *Service) waitForShutdown(ctx context.Context, cancel context.CancelFunc
 
 // gracefulShutdown performs graceful shutdown of all services
 func (s *Service) gracefulShutdown(ctx context.Context) {
-	// Create shutdown context with timeout
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Create shutdown context with shorter timeout for faster shutdown
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer shutdownCancel()
-	
+
 	var wg sync.WaitGroup
-	
+
 	// Stop metrics server first (stop accepting new requests)
 	if s.metricsServer != nil {
 		wg.Add(1)
@@ -309,7 +309,7 @@ func (s *Service) gracefulShutdown(ctx context.Context) {
 			}
 		}()
 	}
-	
+
 	// Stop Kafka consumer (stop processing new messages)
 	if s.kafkaConsumer != nil {
 		wg.Add(1)
@@ -357,14 +357,14 @@ func (s *Service) gracefulShutdown(ctx context.Context) {
 			}
 		}()
 	}
-	
+
 	// Wait for services to stop
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		s.logger.Info("All services stopped successfully")
@@ -396,15 +396,28 @@ func (s *Service) gracefulShutdown(ctx context.Context) {
 		}
 	}
 
-	// Close Kafka producer
+	// Close Kafka producer with timeout
 	if s.kafkaProducer != nil {
 		s.logger.Info("Closing Kafka producer")
-		if err := s.kafkaProducer.Close(); err != nil {
-			s.logger.Error("Error closing Kafka producer", map[string]interface{}{
-				"error": err.Error(),
-			})
-		} else {
-			s.logger.Info("Kafka producer closed successfully")
+
+		// Create a separate goroutine for producer close with timeout
+		producerDone := make(chan error, 1)
+		go func() {
+			producerDone <- s.kafkaProducer.Close()
+		}()
+
+		select {
+		case err := <-producerDone:
+			if err != nil {
+				s.logger.Error("Error closing Kafka producer", map[string]interface{}{
+					"error": err.Error(),
+				})
+			} else {
+				s.logger.Info("Kafka producer closed successfully")
+			}
+		case <-time.After(2 * time.Second):
+			s.logger.Warn("Kafka producer close timed out, forcing shutdown")
+			// Continue with cleanup even if producer close timed out
 		}
 	}
 
@@ -419,6 +432,9 @@ func (s *Service) gracefulShutdown(ctx context.Context) {
 			s.logger.Info("Redis connection closed successfully")
 		}
 	}
+
+	// Final cleanup - force exit if still running
+	s.logger.Info("Graceful shutdown completed")
 }
 
 // IsHealthy returns the current health status of the service

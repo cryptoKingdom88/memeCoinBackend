@@ -8,9 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/segmentio/kafka-go"
-	"github.com/cryptoKingdom88/memeCoinBackend/shared/packet"
 	"aggregatorService/interfaces"
+
+	"github.com/cryptoKingdom88/memeCoinBackend/shared/packet"
+	"github.com/segmentio/kafka-go"
 )
 
 // Consumer implements the KafkaConsumer interface
@@ -21,6 +22,7 @@ type Consumer struct {
 	reader        *kafka.Reader
 	isRunning     bool
 	stopChan      chan struct{}
+	stopOnce      sync.Once
 	wg            sync.WaitGroup
 	mutex         sync.RWMutex
 }
@@ -36,7 +38,7 @@ func NewConsumer() interfaces.KafkaConsumer {
 func (c *Consumer) Initialize(brokers []string, topic, consumerGroup string) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	
+
 	if len(brokers) == 0 {
 		return fmt.Errorf("brokers cannot be empty")
 	}
@@ -46,28 +48,28 @@ func (c *Consumer) Initialize(brokers []string, topic, consumerGroup string) err
 	if consumerGroup == "" {
 		return fmt.Errorf("consumer group cannot be empty")
 	}
-	
+
 	c.brokers = brokers
 	c.topic = topic
 	c.consumerGroup = consumerGroup
-	
-	// Create Kafka reader with proper configuration
+
+	// Create Kafka reader with high-throughput configuration
 	c.reader = kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
 		Topic:          topic,
 		GroupID:        consumerGroup,
-		MinBytes:       1,        // Minimum bytes to read
-		MaxBytes:       10e6,     // Maximum bytes to read (10MB)
-		CommitInterval: time.Second, // Commit interval
+		MinBytes:       100e3,            // 100KB minimum for better batching
+		MaxBytes:       10e6,             // Maximum bytes to read (10MB)
+		CommitInterval: 5 * time.Second,  // Less frequent commits for better performance
 		StartOffset:    kafka.LastOffset, // Start from latest offset
-		ErrorLogger:    kafka.LoggerFunc(func(msg string, args ...interface{}) {
+		ErrorLogger: kafka.LoggerFunc(func(msg string, args ...interface{}) {
 			log.Printf("Kafka error: "+msg, args...)
 		}),
 		Logger: kafka.LoggerFunc(func(msg string, args ...interface{}) {
 			log.Printf("Kafka info: "+msg, args...)
 		}),
 	})
-	
+
 	log.Printf("Kafka consumer initialized - brokers: %v, topic: %s, group: %s", brokers, topic, consumerGroup)
 	return nil
 }
@@ -87,25 +89,25 @@ func (c *Consumer) Start(ctx context.Context, processor interfaces.BlockAggregat
 		c.mutex.Unlock()
 		return fmt.Errorf("processor cannot be nil")
 	}
-	
+
 	c.isRunning = true
 	c.mutex.Unlock()
-	
+
 	log.Printf("Starting Kafka consumer for topic: %s", c.topic)
-	
+
 	// Start consumer goroutine
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 		c.consumeMessages(ctx, processor)
 	}()
-	
+
 	return nil
 }
 
 // Stop stops consuming with graceful shutdown
 func (c *Consumer) Stop() error {
-	return c.StopWithTimeout(30 * time.Second)
+	return c.StopWithTimeout(5 * time.Second) // Reduced timeout to match main shutdown
 }
 
 // StopWithTimeout stops consuming with a specified timeout for graceful shutdown
@@ -117,19 +119,21 @@ func (c *Consumer) StopWithTimeout(timeout time.Duration) error {
 	}
 	c.isRunning = false
 	c.mutex.Unlock()
-	
+
 	log.Printf("Stopping Kafka consumer with timeout: %v", timeout)
-	
-	// Signal stop
-	close(c.stopChan)
-	
+
+	// Signal stop using sync.Once to prevent panic from closing already closed channel
+	c.stopOnce.Do(func() {
+		close(c.stopChan)
+	})
+
 	// Wait for consumer goroutine to finish with timeout
 	done := make(chan struct{})
 	go func() {
 		c.wg.Wait()
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		log.Printf("Consumer goroutine stopped gracefully")
@@ -137,15 +141,16 @@ func (c *Consumer) StopWithTimeout(timeout time.Duration) error {
 		log.Printf("Warning: Consumer shutdown timed out after %v", timeout)
 		// Continue with cleanup even if timeout occurred
 	}
-	
+
 	// Close reader
 	if c.reader != nil {
 		if err := c.reader.Close(); err != nil {
 			log.Printf("Error closing Kafka reader: %v", err)
 			return err
 		}
+		c.reader = nil
 	}
-	
+
 	log.Printf("Kafka consumer stopped")
 	return nil
 }
@@ -153,17 +158,17 @@ func (c *Consumer) StopWithTimeout(timeout time.Duration) error {
 // consumeMessages is the main message consumption loop with batching support
 func (c *Consumer) consumeMessages(ctx context.Context, processor interfaces.BlockAggregator) {
 	log.Printf("Starting message consumption loop with batching")
-	
-	// Batching configuration - Optimized for lower latency
+
+	// Batching configuration - Optimized for high throughput
 	const (
-		maxBatchSize = 50                 // Reduced from 100 to 50 for lower latency
-		batchTimeout = 50 * time.Millisecond // Maximum time to wait for batch
+		maxBatchSize = 500                    // Increased for better throughput
+		batchTimeout = 200 * time.Millisecond // Increased timeout for larger batches
 	)
-	
+
 	messageBatch := make([]kafka.Message, 0, maxBatchSize)
 	batchTimer := time.NewTimer(batchTimeout)
 	batchTimer.Stop() // Stop initial timer
-	
+
 	defer func() {
 		// Process any remaining messages in batch before shutdown
 		if len(messageBatch) > 0 {
@@ -172,7 +177,7 @@ func (c *Consumer) consumeMessages(ctx context.Context, processor interfaces.Blo
 		}
 		batchTimer.Stop()
 	}()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -192,7 +197,7 @@ func (c *Consumer) consumeMessages(ctx context.Context, processor interfaces.Blo
 			readCtx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
 			message, err := c.reader.FetchMessage(readCtx)
 			cancel()
-			
+
 			if err != nil {
 				if err == context.Canceled || err == context.DeadlineExceeded {
 					// Timeout or cancellation - check if we have batch to process
@@ -200,7 +205,7 @@ func (c *Consumer) consumeMessages(ctx context.Context, processor interfaces.Blo
 						c.processBatch(ctx, messageBatch, processor)
 						messageBatch = messageBatch[:0] // Reset batch
 					}
-					
+
 					// If context was cancelled, exit
 					if ctx.Err() != nil {
 						log.Printf("Context cancelled during message fetch")
@@ -213,15 +218,15 @@ func (c *Consumer) consumeMessages(ctx context.Context, processor interfaces.Blo
 				time.Sleep(time.Second)
 				continue
 			}
-			
+
 			// Add message to batch
 			messageBatch = append(messageBatch, message)
-			
+
 			// Start batch timer if this is the first message in batch
 			if len(messageBatch) == 1 {
 				batchTimer.Reset(batchTimeout)
 			}
-			
+
 			// Process batch if it's full
 			if len(messageBatch) >= maxBatchSize {
 				batchTimer.Stop()
@@ -237,11 +242,11 @@ func (c *Consumer) processBatch(ctx context.Context, messages []kafka.Message, p
 	if len(messages) == 0 {
 		return
 	}
-	
+
 	startTime := time.Now()
 	var allTrades []packet.TokenTradeHistory
 	var messagesToCommit []kafka.Message
-	
+
 	// Parse all messages in the batch
 	for _, message := range messages {
 		trades, err := c.parseTradeMessage(message.Value)
@@ -250,34 +255,34 @@ func (c *Consumer) processBatch(ctx context.Context, messages []kafka.Message, p
 			// Skip this message but continue with others
 			continue
 		}
-		
+
 		if len(trades) > 0 {
 			allTrades = append(allTrades, trades...)
 			messagesToCommit = append(messagesToCommit, message)
 		}
 	}
-	
+
 	if len(allTrades) == 0 {
 		log.Printf("Warning: no valid trades found in batch of %d messages", len(messages))
 		return
 	}
-	
+
 	// Process all trades together
 	if err := processor.ProcessTrades(ctx, allTrades); err != nil {
 		log.Printf("Error processing batch of %d trades: %v", len(allTrades), err)
 		// Don't commit messages if processing failed
 		return
 	}
-	
+
 	// Commit all messages in the batch
 	if err := c.reader.CommitMessages(ctx, messagesToCommit...); err != nil {
 		log.Printf("Error committing batch of %d messages: %v", len(messagesToCommit), err)
 		// Continue processing even if commit fails
 	}
-	
+
 	processingTime := time.Since(startTime)
 	log.Printf("Processed batch: %d messages, %d trades in %v", len(messages), len(allTrades), processingTime)
-	
+
 	// Log performance warning if batch processing takes too long
 	if processingTime > 200*time.Millisecond {
 		log.Printf("Warning: slow batch processing detected - %v for %d trades", processingTime, len(allTrades))
@@ -287,31 +292,31 @@ func (c *Consumer) processBatch(ctx context.Context, messages []kafka.Message, p
 // processMessage processes a single Kafka message (kept for backward compatibility)
 func (c *Consumer) processMessage(ctx context.Context, message kafka.Message, processor interfaces.BlockAggregator) error {
 	startTime := time.Now()
-	
+
 	// Parse JSON message into trade data
 	trades, err := c.parseTradeMessage(message.Value)
 	if err != nil {
 		return fmt.Errorf("failed to parse trade message: %w", err)
 	}
-	
+
 	if len(trades) == 0 {
 		log.Printf("Warning: received empty trade list in message")
 		return nil
 	}
-	
+
 	// Process trades through block aggregator
 	if err := processor.ProcessTrades(ctx, trades); err != nil {
 		return fmt.Errorf("failed to process trades: %w", err)
 	}
-	
+
 	processingTime := time.Since(startTime)
 	log.Printf("Processed %d trades in %v", len(trades), processingTime)
-	
+
 	// Log performance warning if processing takes too long
 	if processingTime > 100*time.Millisecond {
 		log.Printf("Warning: slow trade processing detected - %v for %d trades", processingTime, len(trades))
 	}
-	
+
 	return nil
 }
 
@@ -320,7 +325,7 @@ func (c *Consumer) parseTradeMessage(messageData []byte) ([]packet.TokenTradeHis
 	if len(messageData) == 0 {
 		return nil, fmt.Errorf("empty message data")
 	}
-	
+
 	// Try to parse as single trade first
 	var singleTrade packet.TokenTradeHistory
 	if err := json.Unmarshal(messageData, &singleTrade); err == nil {
@@ -330,13 +335,13 @@ func (c *Consumer) parseTradeMessage(messageData []byte) ([]packet.TokenTradeHis
 		}
 		return []packet.TokenTradeHistory{singleTrade}, nil
 	}
-	
+
 	// Try to parse as array of trades
 	var trades []packet.TokenTradeHistory
 	if err := json.Unmarshal(messageData, &trades); err != nil {
 		return nil, fmt.Errorf("failed to parse as single trade or trade array: %w", err)
 	}
-	
+
 	// Validate all trades
 	validTrades := make([]packet.TokenTradeHistory, 0, len(trades))
 	for i, trade := range trades {
@@ -346,7 +351,7 @@ func (c *Consumer) parseTradeMessage(messageData []byte) ([]packet.TokenTradeHis
 		}
 		validTrades = append(validTrades, trade)
 	}
-	
+
 	return validTrades, nil
 }
 
@@ -376,7 +381,7 @@ func (c *Consumer) validateTrade(trade packet.TokenTradeHistory) error {
 	if trade.TxHash == "" {
 		return fmt.Errorf("transaction hash cannot be empty")
 	}
-	
+
 	return nil
 }
 
@@ -391,37 +396,37 @@ func (c *Consumer) IsRunning() bool {
 func (c *Consumer) GetStats() map[string]interface{} {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	
+
 	stats := map[string]interface{}{
-		"is_running":      c.isRunning,
-		"brokers":         c.brokers,
-		"topic":           c.topic,
-		"consumer_group":  c.consumerGroup,
+		"is_running":     c.isRunning,
+		"brokers":        c.brokers,
+		"topic":          c.topic,
+		"consumer_group": c.consumerGroup,
 	}
-	
+
 	if c.reader != nil {
 		readerStats := c.reader.Stats()
 		stats["reader_stats"] = map[string]interface{}{
-			"messages":     readerStats.Messages,
-			"bytes":        readerStats.Bytes,
-			"rebalances":   readerStats.Rebalances,
-			"timeouts":     readerStats.Timeouts,
-			"errors":       readerStats.Errors,
-			"dial_time":    readerStats.DialTime,
-			"read_time":    readerStats.ReadTime,
-			"wait_time":    readerStats.WaitTime,
-			"fetch_size":   readerStats.FetchSize,
-			"fetch_bytes":  readerStats.FetchBytes,
-			"offset":       readerStats.Offset,
-			"lag":          readerStats.Lag,
-			"min_bytes":    readerStats.MinBytes,
-			"max_bytes":    readerStats.MaxBytes,
-			"max_wait":     readerStats.MaxWait,
-			"queue_length": readerStats.QueueLength,
+			"messages":       readerStats.Messages,
+			"bytes":          readerStats.Bytes,
+			"rebalances":     readerStats.Rebalances,
+			"timeouts":       readerStats.Timeouts,
+			"errors":         readerStats.Errors,
+			"dial_time":      readerStats.DialTime,
+			"read_time":      readerStats.ReadTime,
+			"wait_time":      readerStats.WaitTime,
+			"fetch_size":     readerStats.FetchSize,
+			"fetch_bytes":    readerStats.FetchBytes,
+			"offset":         readerStats.Offset,
+			"lag":            readerStats.Lag,
+			"min_bytes":      readerStats.MinBytes,
+			"max_bytes":      readerStats.MaxBytes,
+			"max_wait":       readerStats.MaxWait,
+			"queue_length":   readerStats.QueueLength,
 			"queue_capacity": readerStats.QueueCapacity,
 		}
 	}
-	
+
 	return stats
 }
 
@@ -429,7 +434,7 @@ func (c *Consumer) GetStats() map[string]interface{} {
 func (c *Consumer) GetConfig() map[string]interface{} {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	
+
 	return map[string]interface{}{
 		"brokers":        c.brokers,
 		"topic":          c.topic,
@@ -442,21 +447,21 @@ func (c *Consumer) GetConfig() map[string]interface{} {
 func (c *Consumer) HealthCheck(ctx context.Context) error {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	
+
 	if !c.isRunning {
 		return fmt.Errorf("consumer is not running")
 	}
-	
+
 	if c.reader == nil {
 		return fmt.Errorf("reader is not initialized")
 	}
-	
+
 	// Check reader stats for errors
 	stats := c.reader.Stats()
 	if stats.Errors > 0 {
 		return fmt.Errorf("consumer has %d errors", stats.Errors)
 	}
-	
+
 	return nil
 }
 
@@ -464,11 +469,11 @@ func (c *Consumer) HealthCheck(ctx context.Context) error {
 func (c *Consumer) GetLag() int64 {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	
+
 	if c.reader == nil {
 		return -1
 	}
-	
+
 	stats := c.reader.Stats()
 	return stats.Lag
 }
@@ -477,11 +482,11 @@ func (c *Consumer) GetLag() int64 {
 func (c *Consumer) GetOffset() int64 {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	
+
 	if c.reader == nil {
 		return -1
 	}
-	
+
 	stats := c.reader.Stats()
 	return stats.Offset
 }

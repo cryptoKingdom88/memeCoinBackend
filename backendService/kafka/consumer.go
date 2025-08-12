@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,17 +13,19 @@ import (
 	"backendService/models"
 	"backendService/websocket"
 
+	"github.com/cryptoKingdom88/memeCoinBackend/shared/packet"
 	"github.com/segmentio/kafka-go"
 )
 
 // Consumer represents a Kafka consumer for a specific topic
 type Consumer struct {
-	reader     *kafka.Reader
-	topic      string
-	hubManager *websocket.HubManager
-	ctx        context.Context
-	cancel     context.CancelFunc
-	
+	reader       *kafka.Reader
+	topic        string
+	hubManager   *websocket.HubManager
+	tokenManager *models.TokenManager
+	ctx          context.Context
+	cancel       context.CancelFunc
+
 	// Error tracking for circuit breaker pattern
 	consecutiveErrors int
 	lastErrorTime     time.Time
@@ -32,17 +35,19 @@ type Consumer struct {
 
 // ConsumerManager manages multiple Kafka consumers
 type ConsumerManager struct {
-	consumers  []*Consumer
-	hubManager *websocket.HubManager
-	config     *config.Config
+	consumers    []*Consumer
+	hubManager   *websocket.HubManager
+	tokenManager *models.TokenManager
+	config       *config.Config
 }
 
 // NewConsumerManager creates a new consumer manager
-func NewConsumerManager(hubManager *websocket.HubManager, cfg *config.Config) *ConsumerManager {
+func NewConsumerManager(hubManager *websocket.HubManager, tokenManager *models.TokenManager, cfg *config.Config) *ConsumerManager {
 	return &ConsumerManager{
-		consumers:  make([]*Consumer, 0),
-		hubManager: hubManager,
-		config:     cfg,
+		consumers:    make([]*Consumer, 0),
+		hubManager:   hubManager,
+		tokenManager: tokenManager,
+		config:       cfg,
 	}
 }
 
@@ -55,7 +60,7 @@ func (cm *ConsumerManager) Start() error {
 	}()
 
 	topics := []string{"token-info", "trade-info", "aggregate-info"}
-	
+
 	for _, topic := range topics {
 		consumer, err := cm.createConsumer(topic)
 		if err != nil {
@@ -63,19 +68,19 @@ func (cm *ConsumerManager) Start() error {
 			// Don't fail completely, continue with other topics
 			continue
 		}
-		
+
 		cm.consumers = append(cm.consumers, consumer)
-		
+
 		// Start consumer in a goroutine
 		go consumer.Start()
-		
+
 		log.Printf("Started Kafka consumer for topic: %s", topic)
 	}
-	
+
 	if len(cm.consumers) == 0 {
 		return fmt.Errorf("failed to start any Kafka consumers")
 	}
-	
+
 	log.Printf("Started %d out of %d Kafka consumers", len(cm.consumers), len(topics))
 	return nil
 }
@@ -89,10 +94,10 @@ func (cm *ConsumerManager) Stop() {
 	}()
 
 	log.Println("Stopping Kafka consumers...")
-	
+
 	// Use a channel to wait for all consumers to stop
 	done := make(chan bool, len(cm.consumers))
-	
+
 	for _, consumer := range cm.consumers {
 		if consumer != nil {
 			go func(c *Consumer) {
@@ -108,11 +113,11 @@ func (cm *ConsumerManager) Stop() {
 			done <- true
 		}
 	}
-	
+
 	// Wait for all consumers to stop with timeout
 	timeout := time.After(10 * time.Second)
 	stopped := 0
-	
+
 	for stopped < len(cm.consumers) {
 		select {
 		case <-done:
@@ -122,44 +127,46 @@ func (cm *ConsumerManager) Stop() {
 			return
 		}
 	}
-	
+
 	log.Println("All Kafka consumers stopped")
 }
 
 // createConsumer creates a new Kafka consumer for a specific topic
 func (cm *ConsumerManager) createConsumer(topic string) (*Consumer, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:     cm.config.KafkaBrokers,
-		Topic:       topic,
-		GroupID:     cm.config.KafkaConsumerGroup,
-		MinBytes:    10e3, // 10KB
-		MaxBytes:    10e6, // 10MB
-		MaxWait:     1 * time.Second,
-		StartOffset: kafka.LastOffset,
+		Brokers:        cm.config.KafkaBrokers,
+		Topic:          topic,
+		GroupID:        cm.config.KafkaConsumerGroup,
+		MinBytes:       1,                      // Process immediately
+		MaxBytes:       10e6,                   // 10MB
+		MaxWait:        100 * time.Millisecond, // Very short wait time
+		CommitInterval: 1 * time.Second,        // More frequent commits
+		StartOffset:    kafka.LastOffset,
 	})
-	
+
 	return &Consumer{
-		reader:     reader,
-		topic:      topic,
-		hubManager: cm.hubManager,
-		ctx:        ctx,
-		cancel:     cancel,
+		reader:       reader,
+		topic:        topic,
+		hubManager:   cm.hubManager,
+		tokenManager: cm.tokenManager,
+		ctx:          ctx,
+		cancel:       cancel,
 	}, nil
 }
 
 // Start begins consuming messages from Kafka
 func (c *Consumer) Start() {
 	log.Printf("Starting consumer for topic: %s", c.topic)
-	
+
 	retryCount := 0
 	maxRetries := 10
 	baseDelay := 1 * time.Second
 	maxDelay := 30 * time.Second
 	circuitBreakerThreshold := 5
 	circuitBreakerTimeout := 60 * time.Second
-	
+
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("Panic in consumer for topic %s: %v", c.topic, r)
@@ -169,7 +176,7 @@ func (c *Consumer) Start() {
 			go c.Start()
 		}
 	}()
-	
+
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -187,33 +194,33 @@ func (c *Consumer) Start() {
 					continue
 				}
 			}
-			
+
 			message, err := c.reader.ReadMessage(c.ctx)
 			if err != nil {
 				if err == context.Canceled {
 					return
 				}
-				
+
 				c.handleConsumerError(err)
-				
+
 				// Circuit breaker logic
 				c.consecutiveErrors++
 				c.lastErrorTime = time.Now()
-				
+
 				if c.consecutiveErrors >= circuitBreakerThreshold {
-					log.Printf("Circuit breaker opened for topic %s after %d consecutive errors", 
+					log.Printf("Circuit breaker opened for topic %s after %d consecutive errors",
 						c.topic, c.consecutiveErrors)
 					c.circuitOpen = true
 					c.circuitOpenTime = time.Now()
 					continue
 				}
-				
+
 				retryCount++
 				delay := c.calculateBackoffDelay(retryCount, baseDelay, maxDelay)
-				
-				log.Printf("Error reading message from topic %s (attempt %d/%d, consecutive errors: %d): %v", 
+
+				log.Printf("Error reading message from topic %s (attempt %d/%d, consecutive errors: %d): %v",
 					c.topic, retryCount, maxRetries, c.consecutiveErrors, err)
-				
+
 				if retryCount >= maxRetries {
 					log.Printf("Max retries reached for topic %s, recreating consumer", c.topic)
 					if err := c.recreateReader(); err != nil {
@@ -222,16 +229,16 @@ func (c *Consumer) Start() {
 					}
 					retryCount = 0
 				}
-				
+
 				time.Sleep(delay)
 				continue
 			}
-			
+
 			// Reset error counters on successful read
 			retryCount = 0
 			c.consecutiveErrors = 0
 			c.circuitOpen = false
-			
+
 			c.processMessage(message)
 		}
 	}
@@ -246,19 +253,19 @@ func (c *Consumer) Stop() {
 	}()
 
 	log.Printf("Stopping consumer for topic: %s", c.topic)
-	
+
 	// Cancel the context to stop the consumer loop
 	if c.cancel != nil {
 		c.cancel()
 	}
-	
+
 	// Close the reader
 	if c.reader != nil {
 		if err := c.reader.Close(); err != nil {
 			log.Printf("Error closing reader for topic %s: %v", c.topic, err)
 		}
 	}
-	
+
 	log.Printf("Consumer for topic %s stopped", c.topic)
 }
 
@@ -272,45 +279,30 @@ func (c *Consumer) processMessage(message kafka.Message) {
 
 	log.Printf("Received message from topic %s: key=%s, partition=%d, offset=%d",
 		c.topic, string(message.Key), message.Partition, message.Offset)
-	
+
 	// Validate message
 	if len(message.Value) == 0 {
 		log.Printf("Empty message received from topic %s", c.topic)
 		return
 	}
-	
-	// Parse the message data
-	var messageData interface{}
-	if err := json.Unmarshal(message.Value, &messageData); err != nil {
-		log.Printf("Error unmarshaling message from topic %s: %v", c.topic, err)
+
+	// Check message TTL
+	if c.isMessageExpired(message) {
+		log.Printf("Message expired, skipping: topic=%s, age=%v", c.topic, time.Since(message.Time))
 		return
 	}
-	
-	// Create WebSocket message based on topic
-	var wsMessage *models.WebSocketMessage
+
+	// Handle message based on topic
 	switch c.topic {
 	case "token-info":
-		wsMessage = models.NewWebSocketMessage("token_info", "dashboard", messageData)
+		c.handleTokenInfo(message)
 	case "trade-info":
-		wsMessage = models.NewWebSocketMessage("trade_data", "dashboard", messageData)
+		c.handleTradeInfo(message)
 	case "aggregate-info":
-		wsMessage = models.NewWebSocketMessage("aggregate_data", "dashboard", messageData)
+		c.handleAggregateInfo(message)
 	default:
 		log.Printf("Unknown topic: %s", c.topic)
-		return
 	}
-	
-	// Convert to JSON
-	jsonData, err := wsMessage.ToJSON()
-	if err != nil {
-		log.Printf("Error converting message to JSON for topic %s: %v", c.topic, err)
-		return
-	}
-	
-	// Broadcast to subscribed clients
-	c.hubManager.BroadcastToChannel("dashboard", jsonData)
-	
-	log.Printf("Broadcasted message from topic %s to dashboard channel", c.topic)
 }
 
 // recreateReader recreates the Kafka reader in case of persistent errors
@@ -322,27 +314,27 @@ func (c *Consumer) recreateReader() error {
 	}()
 
 	log.Printf("Recreating Kafka reader for topic %s", c.topic)
-	
+
 	// Store current configuration before closing
 	var brokers []string
 	var groupID string
-	
+
 	if c.reader != nil {
 		config := c.reader.Config()
 		brokers = config.Brokers
 		groupID = config.GroupID
-		
+
 		// Close existing reader
 		if err := c.reader.Close(); err != nil {
 			log.Printf("Error closing existing reader for topic %s: %v", c.topic, err)
 		}
 	}
-	
+
 	// Validate configuration
 	if len(brokers) == 0 {
 		return fmt.Errorf("no brokers available for topic %s", c.topic)
 	}
-	
+
 	// Create new reader with same configuration
 	c.reader = kafka.NewReader(kafka.ReaderConfig{
 		Brokers:     brokers,
@@ -353,7 +345,7 @@ func (c *Consumer) recreateReader() error {
 		MaxWait:     1 * time.Second,
 		StartOffset: kafka.LastOffset,
 	})
-	
+
 	log.Printf("Kafka reader recreated for topic %s", c.topic)
 	return nil
 }
@@ -373,7 +365,7 @@ func (c *Consumer) handleConsumerError(err error) {
 	// Categorize error types
 	errorType := "unknown"
 	severity := "error"
-	
+
 	switch {
 	case err == context.Canceled:
 		errorType = "context_canceled"
@@ -396,10 +388,10 @@ func (c *Consumer) handleConsumerError(err error) {
 			severity = "warning"
 		}
 	}
-	
-	log.Printf("[%s] Consumer error for topic %s (type: %s): %v", 
+
+	log.Printf("[%s] Consumer error for topic %s (type: %s): %v",
 		severity, c.topic, errorType, err)
-	
+
 	// Handle critical errors differently
 	if severity == "critical" {
 		log.Printf("Critical error detected for topic %s, forcing circuit breaker", c.topic)
@@ -416,18 +408,148 @@ func (c *Consumer) calculateBackoffDelay(retryCount int, baseDelay, maxDelay tim
 	if delay > maxDelay {
 		delay = maxDelay
 	}
-	
+
 	// Add jitter (±25% of delay)
-	jitterFactor := float64(2*time.Now().UnixNano()%2 - 1) / 1e9
+	jitterFactor := float64(2*time.Now().UnixNano()%2-1) / 1e9
 	jitter := time.Duration(float64(delay) * 0.25 * jitterFactor)
 	delay += jitter
-	
+
 	if delay < baseDelay {
 		delay = baseDelay
 	}
 	if delay > maxDelay {
 		delay = maxDelay
 	}
-	
+
 	return delay
+}
+
+// handleTokenInfo processes token-info messages
+func (c *Consumer) handleTokenInfo(message kafka.Message) {
+	var tokenInfo packet.TokenInfo
+	if err := json.Unmarshal(message.Value, &tokenInfo); err != nil {
+		log.Printf("Error unmarshaling token info: %v", err)
+		return
+	}
+
+	// 1. Cache token info in Redis with TTL
+	if c.tokenManager != nil {
+		if err := c.tokenManager.CacheTokenInfo(tokenInfo, 10*time.Minute); err != nil {
+			log.Printf("Error caching token info: %v", err)
+		}
+
+		// 2. Add to new tokens cache
+		c.tokenManager.AddNewToken(tokenInfo)
+	}
+
+	// 3. Send to frontend as new token
+	wsMessage := models.NewWebSocketMessageWithCategory("token_info", "dashboard", "new_token", tokenInfo)
+
+	jsonData, err := wsMessage.ToJSON()
+	if err != nil {
+		log.Printf("Error converting token info to JSON: %v", err)
+		return
+	}
+
+	c.hubManager.BroadcastToChannel("dashboard", jsonData)
+	log.Printf("Broadcasted new token info: %s (%s)", tokenInfo.Name, tokenInfo.Symbol)
+}
+
+// handleTradeInfo processes trade-info messages
+func (c *Consumer) handleTradeInfo(message kafka.Message) {
+	var tradeInfo packet.TokenTradeHistory
+	if err := json.Unmarshal(message.Value, &tradeInfo); err != nil {
+		log.Printf("Error unmarshaling trade info: %v", err)
+		return
+	}
+
+	if c.tokenManager == nil {
+		return
+	}
+
+	// 1. Check if this token can be a trending candidate
+	if c.tokenManager.IsTrendingCandidate(tradeInfo.Token, tradeInfo.PriceUsd) {
+		// 2. Get token info (Redis -> DB fallback)
+		tokenInfo := c.tokenManager.GetTokenInfo(tradeInfo.Token)
+		if tokenInfo != nil {
+			// 3. Update trending tokens list
+			if c.tokenManager.UpdateTrendingToken(*tokenInfo, tradeInfo) {
+				// 4. Send token info as trending token (newly added)
+				wsMessage := models.NewWebSocketMessageWithCategory("token_info", "dashboard", "trending_token", *tokenInfo)
+
+				jsonData, err := wsMessage.ToJSON()
+				if err != nil {
+					log.Printf("Error converting trending token info to JSON: %v", err)
+				} else {
+					c.hubManager.BroadcastToChannel("dashboard", jsonData)
+					log.Printf("Broadcasted trending token info: %s (%s)", tokenInfo.Name, tokenInfo.Symbol)
+
+					// Add small delay to prevent message concatenation
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
+		}
+	}
+
+	// 5. Check if this trade is for a relevant token (new 30 or trending 30)
+	if c.tokenManager.IsRelevantToken(tradeInfo.Token) {
+		wsMessage := models.NewWebSocketMessage("trade_data", "dashboard", tradeInfo)
+
+		jsonData, err := wsMessage.ToJSON()
+		if err != nil {
+			log.Printf("Error converting trade data to JSON: %v", err)
+			return
+		}
+
+		c.hubManager.BroadcastToChannel("dashboard", jsonData)
+		log.Printf("Broadcasted trade data for relevant token: %s", tradeInfo.Token)
+	}
+}
+
+// handleAggregateInfo processes aggregate-info messages
+func (c *Consumer) handleAggregateInfo(message kafka.Message) {
+	var aggregateInfo packet.TokenAggregateData
+	if err := json.Unmarshal(message.Value, &aggregateInfo); err != nil {
+		log.Printf("Error unmarshaling aggregate info: %v", err)
+		return
+	}
+
+	// Only send aggregate data for relevant tokens
+	if c.tokenManager != nil && c.tokenManager.IsRelevantToken(aggregateInfo.Token) {
+		wsMessage := models.NewWebSocketMessage("aggregate_data", "dashboard", aggregateInfo)
+
+		jsonData, err := wsMessage.ToJSON()
+		if err != nil {
+			log.Printf("Error converting aggregate data to JSON: %v", err)
+			return
+		}
+
+		c.hubManager.BroadcastToChannel("dashboard", jsonData)
+		log.Printf("Broadcasted aggregate data for relevant token: %s", aggregateInfo.Token)
+	}
+}
+
+// isMessageExpired checks if a Kafka message has exceeded its TTL
+func (c *Consumer) isMessageExpired(message kafka.Message) bool {
+	const defaultTTL = 20 * time.Second
+
+	// Check TTL from headers first
+	for _, header := range message.Headers {
+		if string(header.Key) == "ttl" {
+			if ttlMs, err := strconv.ParseInt(string(header.Value), 10, 64); err == nil {
+				ttl := time.Duration(ttlMs) * time.Millisecond
+				return time.Since(message.Time) > ttl
+			}
+		}
+
+		if string(header.Key) == "expires-at" {
+			if expiryMs, err := strconv.ParseInt(string(header.Value), 10, 64); err == nil {
+				expiryTime := time.UnixMilli(expiryMs)
+				return time.Now().After(expiryTime)
+			}
+		}
+	}
+
+	// Fallback to default TTL based on message timestamp
+	return time.Since(message.Time) > defaultTTL
 }

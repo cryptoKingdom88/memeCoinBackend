@@ -10,42 +10,45 @@ import (
 	"aggregatorService/interfaces"
 	"aggregatorService/logging"
 	"aggregatorService/models"
+
+	"github.com/cryptoKingdom88/memeCoinBackend/shared/packet"
 )
 
 // TokenProcessor implements per-token processing with goroutine-safe operations
 type TokenProcessor struct {
-	tokenAddress string
-	redisManager interfaces.RedisManager
-	calculator   interfaces.SlidingWindowCalculator
-	
+	tokenAddress  string
+	redisManager  interfaces.RedisManager
+	calculator    interfaces.SlidingWindowCalculator
+	kafkaProducer interfaces.KafkaProducer
+
 	// Trade buffering
 	tradeBuffer []models.TradeData
 	bufferMutex sync.RWMutex
-	
+
 	// Current state
 	indices    map[string]int64
 	aggregates map[string]*models.AggregateData
 	lastUpdate time.Time
 	stateMutex sync.RWMutex
-	
+
 	// Processing control
 	processingChan chan models.TradeData
 	shutdownChan   chan struct{}
 	wg             sync.WaitGroup
 	isRunning      bool
 	runningMutex   sync.RWMutex
-	
+
 	// Panic recovery and error handling
 	panicRecovery *PanicRecovery
 	errorLogger   *ErrorLogger
 	healthChecker *HealthChecker
 	goroutineID   string
-	
+
 	// Data consistency validation
 	consistencyValidator *DataConsistencyValidator
 	lastValidationTime   time.Time
 	validationMutex      sync.RWMutex
-	
+
 	// Logging
 	logger *logging.Logger
 }
@@ -59,43 +62,44 @@ func NewTokenProcessor() interfaces.TokenProcessor {
 		processingChan: make(chan models.TradeData, 100), // Buffer up to 100 trades
 		shutdownChan:   make(chan struct{}),
 	}
-	
+
 	// Initialize panic recovery and error handling
 	tp.panicRecovery = NewPanicRecovery(3, 5*time.Second) // Max 3 restarts, 5 second delay
 	tp.errorLogger = NewErrorLogger("TokenProcessor")
 	tp.healthChecker = NewHealthChecker(10 * time.Second) // Check health every 10 seconds
 	tp.goroutineID = fmt.Sprintf("token_processor_%d", time.Now().UnixNano())
-	
+
 	// Initialize data consistency validator (will be set during Initialize)
 	tp.consistencyValidator = nil
-	
+
 	// Set up panic recovery callbacks
 	tp.panicRecovery.SetPanicCallback(tp.handlePanic)
 	tp.panicRecovery.SetRestartCallback(tp.handleRestart)
-	
+
 	return tp
 }
 
 // Initialize initializes the processor for a specific token
-func (tp *TokenProcessor) Initialize(tokenAddress string, redisManager interfaces.RedisManager, calculator interfaces.SlidingWindowCalculator) error {
+func (tp *TokenProcessor) Initialize(tokenAddress string, redisManager interfaces.RedisManager, calculator interfaces.SlidingWindowCalculator, kafkaProducer interfaces.KafkaProducer) error {
 	tp.runningMutex.Lock()
 	defer tp.runningMutex.Unlock()
-	
+
 	if tp.isRunning {
 		return fmt.Errorf("processor already initialized and running")
 	}
-	
+
 	tp.tokenAddress = tokenAddress
 	tp.redisManager = redisManager
 	tp.calculator = calculator
+	tp.kafkaProducer = kafkaProducer
 	tp.goroutineID = fmt.Sprintf("token_processor_%s_%d", tokenAddress, time.Now().UnixNano())
-	
+
 	// Initialize logger with token context
 	tp.logger = logging.NewLogger("aggregator-service", "token-processor").WithToken(tokenAddress)
-	
+
 	// Initialize data consistency validator
 	tp.consistencyValidator = NewDataConsistencyValidator(redisManager, calculator)
-	
+
 	// Load existing data from Redis
 	if err := tp.loadStateFromRedis(context.Background()); err != nil {
 		tp.errorLogger.LogError("initialize_load_state", err, map[string]interface{}{
@@ -103,23 +107,23 @@ func (tp *TokenProcessor) Initialize(tokenAddress string, redisManager interface
 		})
 		// Continue with empty state
 	}
-	
+
 	// Register with health checker
 	tp.healthChecker.RegisterGoroutine(tp.goroutineID, map[string]interface{}{
 		"token_address": tokenAddress,
 		"component":     "TokenProcessor",
 	})
-	
+
 	// Start health monitoring
 	tp.healthChecker.StartHealthMonitoring(context.Background())
-	
+
 	// Start processing goroutine with panic recovery
 	tp.wg.Add(1)
 	tp.startProcessingWorkerWithRecovery()
-	
+
 	tp.isRunning = true
 	log.Printf("TokenProcessor initialized for token %s with goroutine ID %s", tokenAddress, tp.goroutineID)
-	
+
 	return nil
 }
 
@@ -131,17 +135,17 @@ func (tp *TokenProcessor) ProcessTrade(ctx context.Context, trade models.TradeDa
 		return fmt.Errorf("processor not running")
 	}
 	tp.runningMutex.RUnlock()
-	
+
 	// Validate trade data
 	if err := trade.ValidateTradeData(); err != nil {
 		return fmt.Errorf("invalid trade data: %w", err)
 	}
-	
+
 	// Ensure trade is for this token
 	if trade.Token != tp.tokenAddress {
 		return fmt.Errorf("trade token %s does not match processor token %s", trade.Token, tp.tokenAddress)
 	}
-	
+
 	// Send trade to processing channel (non-blocking)
 	select {
 	case tp.processingChan <- trade:
@@ -161,33 +165,33 @@ func (tp *TokenProcessor) startProcessingWorkerWithRecovery() {
 		"goroutine_id":  tp.goroutineID,
 		"component":     "TokenProcessor",
 	}
-	
+
 	tp.panicRecovery.RecoverAndRestart(tp.goroutineID, processorInfo, tp.processTradesWorker)
 }
 
 // processTradesWorker is the main processing goroutine
 func (tp *TokenProcessor) processTradesWorker() {
 	defer tp.wg.Done()
-	
+
 	// Update health status
 	tp.healthChecker.UpdateGoroutineHealth(tp.goroutineID, true)
-	
+
 	for {
 		select {
 		case trade := <-tp.processingChan:
 			// Update health status to show we're active
 			tp.healthChecker.UpdateGoroutineHealth(tp.goroutineID, true)
-			
+
 			if err := tp.processTradeDirect(context.Background(), trade); err != nil {
 				tp.errorLogger.LogError("process_trade", err, map[string]interface{}{
 					"token_address": tp.tokenAddress,
 					"trade_hash":    trade.TxHash,
 				})
 			}
-			
+
 		case <-tp.shutdownChan:
 			log.Printf("Processing worker for token %s received shutdown signal", tp.tokenAddress)
-			
+
 			// Process remaining trades in channel
 			for {
 				select {
@@ -212,14 +216,14 @@ func (tp *TokenProcessor) processTradesWorker() {
 func (tp *TokenProcessor) processTradeDirect(ctx context.Context, trade models.TradeData) error {
 	tp.stateMutex.Lock()
 	defer tp.stateMutex.Unlock()
-	
+
 	// Add trade to buffer
 	tp.bufferMutex.Lock()
 	tp.tradeBuffer = append(tp.tradeBuffer, trade)
 	currentTrades := make([]models.TradeData, len(tp.tradeBuffer))
 	copy(currentTrades, tp.tradeBuffer)
 	tp.bufferMutex.Unlock()
-	
+
 	// Update sliding windows
 	newIndices, newAggregates, err := tp.calculator.UpdateWindows(
 		ctx,
@@ -231,20 +235,24 @@ func (tp *TokenProcessor) processTradeDirect(ctx context.Context, trade models.T
 	if err != nil {
 		return fmt.Errorf("failed to update sliding windows: %w", err)
 	}
-	
+
 	// Update internal state
 	tp.indices = newIndices
 	tp.aggregates = newAggregates
 	tp.lastUpdate = time.Now()
-	
+
 	// Persist to Redis atomically
 	if err := tp.persistStateToRedis(ctx); err != nil {
 		log.Printf("Warning: failed to persist state to Redis for token %s: %v", tp.tokenAddress, err)
 		// Don't return error as the in-memory state is updated
 	}
-	
 
-	
+	// Immediately send aggregates to Kafka
+	if err := tp.sendAggregatesToKafka(ctx); err != nil {
+		log.Printf("Warning: failed to send aggregates to Kafka for token %s: %v", tp.tokenAddress, err)
+		// Don't return error as the aggregation is still successful
+	}
+
 	return nil
 }
 
@@ -252,13 +260,13 @@ func (tp *TokenProcessor) processTradeDirect(ctx context.Context, trade models.T
 func (tp *TokenProcessor) GetAggregates(ctx context.Context) (map[string]*models.AggregateData, error) {
 	tp.stateMutex.RLock()
 	defer tp.stateMutex.RUnlock()
-	
+
 	// Create a deep copy to prevent external modification
 	result := make(map[string]*models.AggregateData)
 	for timeframe, aggregate := range tp.aggregates {
 		result[timeframe] = aggregate.Clone()
 	}
-	
+
 	return result, nil
 }
 
@@ -266,31 +274,31 @@ func (tp *TokenProcessor) GetAggregates(ctx context.Context) (map[string]*models
 func (tp *TokenProcessor) PerformManualAggregation(ctx context.Context) error {
 	tp.stateMutex.Lock()
 	defer tp.stateMutex.Unlock()
-	
+
 	// Load current trades from Redis
 	tokenData, err := tp.redisManager.GetTokenData(ctx, tp.tokenAddress)
 	if err != nil {
 		return fmt.Errorf("failed to load token data from Redis: %w", err)
 	}
-	
+
 	// Update trade buffer with Redis data
 	tp.bufferMutex.Lock()
 	tp.tradeBuffer = tokenData.Trades
 	tp.bufferMutex.Unlock()
-	
+
 	// Recalculate all windows from scratch
 	currentTime := time.Now()
-	
+
 	// Get all time window names from calculator
 	windowNames := tp.calculator.GetAllTimeWindowNames()
-	
+
 	for _, windowName := range windowNames {
 		// Get time window configuration
 		timeWindow, exists := tp.calculator.GetTimeWindowByName(windowName)
 		if !exists {
 			continue
 		}
-		
+
 		// Recalculate window
 		aggregate, index, err := tp.calculator.CalculateWindow(
 			ctx,
@@ -302,19 +310,19 @@ func (tp *TokenProcessor) PerformManualAggregation(ctx context.Context) error {
 			log.Printf("Warning: failed to recalculate window %s for token %s: %v", windowName, tp.tokenAddress, err)
 			continue
 		}
-		
+
 		// Update state
 		tp.indices[windowName] = index
 		tp.aggregates[windowName] = aggregate
 	}
-	
+
 	tp.lastUpdate = currentTime
-	
+
 	// Persist updated state to Redis
 	if err := tp.persistStateToRedis(ctx); err != nil {
 		return fmt.Errorf("failed to persist manual aggregation results: %w", err)
 	}
-	
+
 	log.Printf("Manual aggregation completed for token %s", tp.tokenAddress)
 	return nil
 }
@@ -323,21 +331,21 @@ func (tp *TokenProcessor) PerformManualAggregation(ctx context.Context) error {
 func (tp *TokenProcessor) Shutdown(ctx context.Context) error {
 	tp.runningMutex.Lock()
 	defer tp.runningMutex.Unlock()
-	
+
 	if !tp.isRunning {
 		return nil // Already shut down
 	}
-	
+
 	// Signal shutdown
 	close(tp.shutdownChan)
-	
+
 	// Wait for processing goroutine to finish with timeout
 	done := make(chan struct{})
 	go func() {
 		tp.wg.Wait()
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		// Graceful shutdown completed
@@ -348,10 +356,10 @@ func (tp *TokenProcessor) Shutdown(ctx context.Context) error {
 		// Fallback timeout
 		log.Printf("Warning: TokenProcessor shutdown timed out (5s) for token %s", tp.tokenAddress)
 	}
-	
+
 	tp.isRunning = false
 	log.Printf("TokenProcessor shut down for token %s", tp.tokenAddress)
-	
+
 	return nil
 }
 
@@ -361,16 +369,16 @@ func (tp *TokenProcessor) loadStateFromRedis(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to get token data: %w", err)
 	}
-	
+
 	// Update internal state
 	tp.bufferMutex.Lock()
 	tp.tradeBuffer = tokenData.Trades
 	tp.bufferMutex.Unlock()
-	
+
 	tp.indices = tokenData.Indices
 	tp.aggregates = tokenData.Aggregates
 	tp.lastUpdate = tokenData.LastUpdate
-	
+
 	return nil
 }
 
@@ -385,11 +393,11 @@ func (tp *TokenProcessor) persistStateToRedis(ctx context.Context) error {
 		Aggregates:   make(map[string]*models.AggregateData),
 		LastUpdate:   tp.lastUpdate,
 	}
-	
+
 	// Copy trade buffer
 	copy(tokenData.Trades, tp.tradeBuffer)
 	tp.bufferMutex.RUnlock()
-	
+
 	// Copy indices and aggregates
 	for k, v := range tp.indices {
 		tokenData.Indices[k] = v
@@ -397,7 +405,7 @@ func (tp *TokenProcessor) persistStateToRedis(ctx context.Context) error {
 	for k, v := range tp.aggregates {
 		tokenData.Aggregates[k] = v.Clone()
 	}
-	
+
 	// Update token data in Redis
 	return tp.redisManager.UpdateTokenData(ctx, tp.tokenAddress, tokenData)
 }
@@ -441,7 +449,7 @@ func (tp *TokenProcessor) FlushTradeBuffer(ctx context.Context) error {
 		return fmt.Errorf("processor not running")
 	}
 	tp.runningMutex.RUnlock()
-	
+
 	// Wait for processing channel to be empty
 	for len(tp.processingChan) > 0 {
 		select {
@@ -451,7 +459,7 @@ func (tp *TokenProcessor) FlushTradeBuffer(ctx context.Context) error {
 			// Continue waiting
 		}
 	}
-	
+
 	return nil
 }
 
@@ -459,7 +467,7 @@ func (tp *TokenProcessor) FlushTradeBuffer(ctx context.Context) error {
 func (tp *TokenProcessor) GetCurrentIndices() map[string]int64 {
 	tp.stateMutex.RLock()
 	defer tp.stateMutex.RUnlock()
-	
+
 	result := make(map[string]int64)
 	for k, v := range tp.indices {
 		result[k] = v
@@ -472,7 +480,7 @@ func (tp *TokenProcessor) UpdateLastUpdateTimestamp(ctx context.Context) error {
 	tp.stateMutex.Lock()
 	tp.lastUpdate = time.Now()
 	tp.stateMutex.Unlock()
-	
+
 	// Update in Redis
 	return tp.redisManager.UpdateLastUpdate(ctx, tp.tokenAddress, tp.lastUpdate)
 }
@@ -481,7 +489,7 @@ func (tp *TokenProcessor) UpdateLastUpdateTimestamp(ctx context.Context) error {
 func (tp *TokenProcessor) ValidateState() error {
 	tp.stateMutex.RLock()
 	defer tp.stateMutex.RUnlock()
-	
+
 	// Validate aggregates
 	for timeframe, aggregate := range tp.aggregates {
 		if aggregate == nil {
@@ -491,14 +499,14 @@ func (tp *TokenProcessor) ValidateState() error {
 			return fmt.Errorf("invalid aggregate for timeframe %s: %w", timeframe, err)
 		}
 	}
-	
+
 	// Validate indices
 	for timeframe, index := range tp.indices {
 		if index < 0 {
 			return fmt.Errorf("negative index for timeframe %s: %d", timeframe, index)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -507,12 +515,12 @@ func (tp *TokenProcessor) GetMemoryUsage() map[string]int {
 	tp.bufferMutex.RLock()
 	tradeCount := len(tp.tradeBuffer)
 	tp.bufferMutex.RUnlock()
-	
+
 	tp.stateMutex.RLock()
 	indicesCount := len(tp.indices)
 	aggregatesCount := len(tp.aggregates)
 	tp.stateMutex.RUnlock()
-	
+
 	return map[string]int{
 		"trade_count":      tradeCount,
 		"indices_count":    indicesCount,
@@ -525,7 +533,7 @@ func (tp *TokenProcessor) GetMemoryUsage() map[string]int {
 func (tp *TokenProcessor) handlePanic(panicInfo *PanicInfo) {
 	// Record panic in health checker
 	tp.healthChecker.RecordPanic(tp.goroutineID)
-	
+
 	// Log detailed panic information
 	tp.errorLogger.LogPanic("process_trades_worker", panicInfo.PanicValue, map[string]interface{}{
 		"token_address":  tp.tokenAddress,
@@ -534,7 +542,7 @@ func (tp *TokenProcessor) handlePanic(panicInfo *PanicInfo) {
 		"timestamp":      panicInfo.Timestamp,
 		"processor_info": panicInfo.ProcessorInfo,
 	})
-	
+
 	// Try to save current state to Redis before restart
 	if err := tp.saveStateOnPanic(); err != nil {
 		tp.errorLogger.LogError("save_state_on_panic", err, map[string]interface{}{
@@ -547,19 +555,19 @@ func (tp *TokenProcessor) handlePanic(panicInfo *PanicInfo) {
 func (tp *TokenProcessor) handleRestart(goroutineID string, attempt int) error {
 	// Record restart in health checker
 	tp.healthChecker.RecordRestart(goroutineID)
-	
+
 	// Log restart attempt
 	tp.errorLogger.LogRestart(goroutineID, attempt, map[string]interface{}{
 		"token_address": tp.tokenAddress,
 	})
-	
+
 	// Validate processor state before restart
 	if err := tp.ValidateState(); err != nil {
 		tp.errorLogger.LogError("validate_state_on_restart", err, map[string]interface{}{
 			"token_address": tp.tokenAddress,
 			"attempt":       attempt,
 		})
-		
+
 		// Try to recover state from Redis
 		if err := tp.recoverStateFromRedis(); err != nil {
 			tp.errorLogger.LogError("recover_state_from_redis", err, map[string]interface{}{
@@ -568,30 +576,30 @@ func (tp *TokenProcessor) handleRestart(goroutineID string, attempt int) error {
 			return fmt.Errorf("failed to recover state from Redis: %w", err)
 		}
 	}
-	
+
 	// Recreate processing channel if needed
 	if tp.processingChan == nil {
 		tp.processingChan = make(chan models.TradeData, 100)
 	}
-	
+
 	// Recreate shutdown channel if needed
 	if tp.shutdownChan == nil {
 		tp.shutdownChan = make(chan struct{})
 	}
-	
+
 	// Update goroutine ID for the new instance
 	tp.goroutineID = fmt.Sprintf("token_processor_%s_%d", tp.tokenAddress, time.Now().UnixNano())
-	
+
 	// Re-register with health checker
 	tp.healthChecker.RegisterGoroutine(tp.goroutineID, map[string]interface{}{
 		"token_address": tp.tokenAddress,
 		"component":     "TokenProcessor",
 		"restart_count": attempt,
 	})
-	
+
 	// Increment wait group for the new goroutine
 	tp.wg.Add(1)
-	
+
 	return nil
 }
 
@@ -602,10 +610,10 @@ func (tp *TokenProcessor) saveStateOnPanic() error {
 			log.Printf("Panic occurred while saving state on panic for token %s: %v", tp.tokenAddress, r)
 		}
 	}()
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	return tp.persistStateToRedis(ctx)
 }
 
@@ -613,7 +621,7 @@ func (tp *TokenProcessor) saveStateOnPanic() error {
 func (tp *TokenProcessor) recoverStateFromRedis() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	// Load state from Redis
 	if err := tp.loadStateFromRedis(ctx); err != nil {
 		// If loading fails, initialize with empty state
@@ -622,14 +630,14 @@ func (tp *TokenProcessor) recoverStateFromRedis() error {
 		tp.aggregates = make(map[string]*models.AggregateData)
 		tp.lastUpdate = time.Now()
 		tp.stateMutex.Unlock()
-		
+
 		tp.bufferMutex.Lock()
 		tp.tradeBuffer = make([]models.TradeData, 0)
 		tp.bufferMutex.Unlock()
-		
+
 		log.Printf("Initialized empty state for token %s after recovery failure", tp.tokenAddress)
 	}
-	
+
 	return nil
 }
 
@@ -637,13 +645,13 @@ func (tp *TokenProcessor) recoverStateFromRedis() error {
 func (tp *TokenProcessor) GetPanicRecoveryStats() map[string]interface{} {
 	restartCounts := tp.panicRecovery.GetAllRestartCounts()
 	health, exists := tp.healthChecker.GetGoroutineHealth(tp.goroutineID)
-	
+
 	stats := map[string]interface{}{
-		"goroutine_id":    tp.goroutineID,
-		"restart_counts":  restartCounts,
-		"health_exists":   exists,
+		"goroutine_id":   tp.goroutineID,
+		"restart_counts": restartCounts,
+		"health_exists":  exists,
 	}
-	
+
 	if exists {
 		stats["health"] = map[string]interface{}{
 			"last_seen":     health.LastSeen,
@@ -652,7 +660,7 @@ func (tp *TokenProcessor) GetPanicRecoveryStats() map[string]interface{} {
 			"is_healthy":    health.IsHealthy,
 		}
 	}
-	
+
 	return stats
 }
 
@@ -667,11 +675,11 @@ func (tp *TokenProcessor) ValidateDataConsistency(ctx context.Context) (*Validat
 	if tp.consistencyValidator == nil {
 		return nil, fmt.Errorf("consistency validator not initialized")
 	}
-	
+
 	tp.validationMutex.Lock()
 	tp.lastValidationTime = time.Now()
 	tp.validationMutex.Unlock()
-	
+
 	return tp.consistencyValidator.ValidateTokenData(ctx, tp.tokenAddress)
 }
 
@@ -680,11 +688,11 @@ func (tp *TokenProcessor) IsValidationNeeded() bool {
 	if tp.consistencyValidator == nil {
 		return false
 	}
-	
+
 	tp.validationMutex.RLock()
 	lastValidation := tp.lastValidationTime
 	tp.validationMutex.RUnlock()
-	
+
 	// Validate every 5 minutes or if never validated
 	return lastValidation.IsZero() || time.Since(lastValidation) > 5*time.Minute
 }
@@ -701,13 +709,13 @@ func (tp *TokenProcessor) RecoverFromRedis(ctx context.Context) error {
 	if tp.consistencyValidator == nil {
 		return fmt.Errorf("consistency validator not initialized")
 	}
-	
+
 	// Validate and recover data
 	result, err := tp.consistencyValidator.ValidateTokenData(ctx, tp.tokenAddress)
 	if err != nil {
 		return fmt.Errorf("failed to validate data during recovery: %w", err)
 	}
-	
+
 	// Log recovery results
 	if !result.IsConsistent {
 		tp.errorLogger.LogError("data_inconsistency_detected", fmt.Errorf("data inconsistency detected"), map[string]interface{}{
@@ -716,7 +724,69 @@ func (tp *TokenProcessor) RecoverFromRedis(ctx context.Context) error {
 			"recovery_applied": result.RecoveryApplied,
 		})
 	}
-	
+
 	// Reload state from Redis after potential recovery
 	return tp.loadStateFromRedis(ctx)
+}
+
+// sendAggregatesToKafka immediately sends current aggregates to Kafka
+func (tp *TokenProcessor) sendAggregatesToKafka(ctx context.Context) error {
+	if tp.kafkaProducer == nil {
+		return fmt.Errorf("kafka producer not initialized")
+	}
+
+	// Get current aggregates (already holding stateMutex)
+	aggregateData, err := tp.buildAggregateData()
+	if err != nil {
+		return fmt.Errorf("failed to build aggregate data: %w", err)
+	}
+
+	// Send to Kafka
+	if err := tp.kafkaProducer.SendAggregateData(ctx, aggregateData); err != nil {
+		return fmt.Errorf("failed to send aggregate data: %w", err)
+	}
+
+	log.Printf("Sent aggregates to Kafka for token %s", tp.tokenAddress)
+	return nil
+}
+
+// buildAggregateData builds packet.TokenAggregateData from current aggregates
+func (tp *TokenProcessor) buildAggregateData() (*packet.TokenAggregateData, error) {
+	// Import packet at the top of the file
+	// Convert internal aggregates to packet format
+	var aggregateItems []packet.TokenAggregateItem
+
+	for timeWindow, aggregate := range tp.aggregates {
+		if aggregate == nil {
+			continue
+		}
+
+		item := packet.TokenAggregateItem{
+			TimeWindow:  timeWindow,
+			SellCount:   int(aggregate.SellCount),
+			BuyCount:    int(aggregate.BuyCount),
+			TotalTrades: int(aggregate.SellCount + aggregate.BuyCount),
+			SellVolume:  fmt.Sprintf("%.6f", aggregate.SellVolume),
+			BuyVolume:   fmt.Sprintf("%.6f", aggregate.BuyVolume),
+			TotalVolume: fmt.Sprintf("%.6f", aggregate.TotalVolume),
+			VolumeUsd:   fmt.Sprintf("%.6f", aggregate.TotalVolume),
+			PriceChange: aggregate.PriceChange,
+			OpenPrice:   fmt.Sprintf("%.6f", aggregate.StartPrice),
+			ClosePrice:  fmt.Sprintf("%.6f", aggregate.EndPrice),
+			Timestamp:   time.Now().Format(time.RFC3339),
+		}
+		aggregateItems = append(aggregateItems, item)
+	}
+
+	// Get token info (symbol and name might not be available in processor)
+	tokenData := &packet.TokenAggregateData{
+		Token:         tp.tokenAddress,
+		Symbol:        "", // Will be filled by the caller if needed
+		Name:          "", // Will be filled by the caller if needed
+		AggregateData: aggregateItems,
+		GeneratedAt:   time.Now().Format(time.RFC3339),
+		Version:       "1.0",
+	}
+
+	return tokenData, nil
 }

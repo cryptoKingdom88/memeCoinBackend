@@ -7,10 +7,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/segmentio/kafka-go"
-	"github.com/cryptoKingdom88/memeCoinBackend/shared/packet"
 	"aggregatorService/interfaces"
 	"aggregatorService/logging"
+
+	"github.com/cryptoKingdom88/memeCoinBackend/shared/packet"
+	"github.com/segmentio/kafka-go"
 )
 
 const (
@@ -19,24 +20,24 @@ const (
 
 // Producer implements the KafkaProducer interface
 type Producer struct {
-	brokers    []string
-	writer     *kafka.Writer
-	logger     *logging.Logger
-	isRunning  bool
-	mutex      sync.RWMutex
-	stats      ProducerStats
+	brokers   []string
+	writer    *kafka.Writer
+	logger    *logging.Logger
+	isRunning bool
+	mutex     sync.RWMutex
+	stats     ProducerStats
 }
 
 // ProducerStats holds producer statistics
 type ProducerStats struct {
-	MessagesSent     int64     `json:"messages_sent"`
-	MessagesError    int64     `json:"messages_error"`
-	BytesSent        int64     `json:"bytes_sent"`
-	LastSentTime     time.Time `json:"last_sent_time"`
-	LastErrorTime    time.Time `json:"last_error_time"`
-	LastError        string    `json:"last_error"`
-	AverageLatency   float64   `json:"average_latency_ms"`
-	TotalLatency     int64     `json:"total_latency_ms"`
+	MessagesSent   int64     `json:"messages_sent"`
+	MessagesError  int64     `json:"messages_error"`
+	BytesSent      int64     `json:"bytes_sent"`
+	LastSentTime   time.Time `json:"last_sent_time"`
+	LastErrorTime  time.Time `json:"last_error_time"`
+	LastError      string    `json:"last_error"`
+	AverageLatency float64   `json:"average_latency_ms"`
+	TotalLatency   int64     `json:"total_latency_ms"`
 }
 
 // NewProducer creates a new Kafka producer
@@ -50,13 +51,13 @@ func NewProducer() interfaces.KafkaProducer {
 func (p *Producer) Initialize(brokers []string) error {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	
+
 	if len(brokers) == 0 {
 		return fmt.Errorf("brokers cannot be empty")
 	}
-	
+
 	p.brokers = brokers
-	
+
 	// Create Kafka writer with optimized configuration
 	p.writer = kafka.NewWriter(kafka.WriterConfig{
 		Brokers:      brokers,
@@ -77,14 +78,14 @@ func (p *Producer) Initialize(brokers []string) error {
 			})
 		}),
 	})
-	
+
 	p.isRunning = true
-	
+
 	p.logger.Info("Kafka producer initialized", map[string]interface{}{
 		"brokers": brokers,
 		"topic":   TopicAggregateInfo,
 	})
-	
+
 	return nil
 }
 
@@ -93,7 +94,7 @@ func (p *Producer) SendAggregateData(ctx context.Context, aggregateData *packet.
 	if aggregateData == nil {
 		return fmt.Errorf("aggregate data cannot be nil")
 	}
-	
+
 	p.mutex.RLock()
 	if !p.isRunning || p.writer == nil {
 		p.mutex.RUnlock()
@@ -101,28 +102,33 @@ func (p *Producer) SendAggregateData(ctx context.Context, aggregateData *packet.
 	}
 	writer := p.writer
 	p.mutex.RUnlock()
-	
+
 	startTime := time.Now()
-	
+
 	// Marshal aggregate data to JSON
 	messageBytes, err := json.Marshal(aggregateData)
 	if err != nil {
 		p.updateErrorStats(err)
 		return fmt.Errorf("failed to marshal aggregate data: %w", err)
 	}
-	
-	// Create Kafka message
+
+	// Create Kafka message with TTL
+	now := time.Now()
+	expiryTime := now.Add(20 * time.Second) // 20 seconds TTL
+
 	message := kafka.Message{
 		Key:   []byte(aggregateData.Token), // Use token address as key for partitioning
 		Value: messageBytes,
-		Time:  time.Now(),
+		Time:  now,
 		Headers: []kafka.Header{
 			{Key: "content-type", Value: []byte("application/json")},
+			{Key: "ttl", Value: []byte("20000")}, // TTL in milliseconds
+			{Key: "expires-at", Value: []byte(fmt.Sprintf("%d", expiryTime.UnixMilli()))},
 			{Key: "version", Value: []byte(aggregateData.Version)},
 			{Key: "token", Value: []byte(aggregateData.Token)},
 		},
 	}
-	
+
 	// Send message
 	if err := writer.WriteMessages(ctx, message); err != nil {
 		p.updateErrorStats(err)
@@ -132,18 +138,18 @@ func (p *Producer) SendAggregateData(ctx context.Context, aggregateData *packet.
 		})
 		return fmt.Errorf("failed to send message to Kafka: %w", err)
 	}
-	
+
 	// Update success stats
 	latency := time.Since(startTime)
 	p.updateSuccessStats(len(messageBytes), latency)
-	
+
 	p.logger.Debug("Aggregate data sent successfully", map[string]interface{}{
-		"token":          aggregateData.Token,
-		"data_points":    len(aggregateData.AggregateData),
-		"message_size":   len(messageBytes),
-		"latency_ms":     latency.Milliseconds(),
+		"token":        aggregateData.Token,
+		"data_points":  len(aggregateData.AggregateData),
+		"message_size": len(messageBytes),
+		"latency_ms":   latency.Milliseconds(),
 	})
-	
+
 	return nil
 }
 
@@ -152,7 +158,7 @@ func (p *Producer) SendBatchAggregateData(ctx context.Context, aggregateDataList
 	if len(aggregateDataList) == 0 {
 		return nil
 	}
-	
+
 	p.mutex.RLock()
 	if !p.isRunning || p.writer == nil {
 		p.mutex.RUnlock()
@@ -160,18 +166,18 @@ func (p *Producer) SendBatchAggregateData(ctx context.Context, aggregateDataList
 	}
 	writer := p.writer
 	p.mutex.RUnlock()
-	
+
 	startTime := time.Now()
-	
+
 	// Prepare batch messages
 	messages := make([]kafka.Message, 0, len(aggregateDataList))
 	totalBytes := 0
-	
+
 	for _, aggregateData := range aggregateDataList {
 		if aggregateData == nil {
 			continue
 		}
-		
+
 		// Marshal aggregate data to JSON
 		messageBytes, err := json.Marshal(aggregateData)
 		if err != nil {
@@ -181,7 +187,7 @@ func (p *Producer) SendBatchAggregateData(ctx context.Context, aggregateDataList
 			})
 			continue
 		}
-		
+
 		// Create Kafka message
 		message := kafka.Message{
 			Key:   []byte(aggregateData.Token),
@@ -193,15 +199,15 @@ func (p *Producer) SendBatchAggregateData(ctx context.Context, aggregateDataList
 				{Key: "token", Value: []byte(aggregateData.Token)},
 			},
 		}
-		
+
 		messages = append(messages, message)
 		totalBytes += len(messageBytes)
 	}
-	
+
 	if len(messages) == 0 {
 		return fmt.Errorf("no valid messages to send")
 	}
-	
+
 	// Send batch messages
 	if err := writer.WriteMessages(ctx, messages...); err != nil {
 		p.updateErrorStats(err)
@@ -211,17 +217,17 @@ func (p *Producer) SendBatchAggregateData(ctx context.Context, aggregateDataList
 		})
 		return fmt.Errorf("failed to send batch messages to Kafka: %w", err)
 	}
-	
+
 	// Update success stats
 	latency := time.Since(startTime)
 	p.updateBatchSuccessStats(len(messages), totalBytes, latency)
-	
+
 	p.logger.Info("Batch aggregate data sent successfully", map[string]interface{}{
-		"batch_size":   len(messages),
-		"total_bytes":  totalBytes,
-		"latency_ms":   latency.Milliseconds(),
+		"batch_size":  len(messages),
+		"total_bytes": totalBytes,
+		"latency_ms":  latency.Milliseconds(),
 	})
-	
+
 	return nil
 }
 
@@ -229,21 +235,21 @@ func (p *Producer) SendBatchAggregateData(ctx context.Context, aggregateDataList
 func (p *Producer) HealthCheck(ctx context.Context) error {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
-	
+
 	if !p.isRunning {
 		return fmt.Errorf("producer is not running")
 	}
-	
+
 	if p.writer == nil {
 		return fmt.Errorf("writer is not initialized")
 	}
-	
+
 	// Check writer stats for errors
 	stats := p.writer.Stats()
 	if stats.Errors > 0 {
 		return fmt.Errorf("producer has %d errors", stats.Errors)
 	}
-	
+
 	return nil
 }
 
@@ -251,37 +257,37 @@ func (p *Producer) HealthCheck(ctx context.Context) error {
 func (p *Producer) GetStats() map[string]interface{} {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
-	
+
 	stats := map[string]interface{}{
-		"is_running":        p.isRunning,
-		"brokers":           p.brokers,
-		"topic":             TopicAggregateInfo,
-		"messages_sent":     p.stats.MessagesSent,
-		"messages_error":    p.stats.MessagesError,
-		"bytes_sent":        p.stats.BytesSent,
-		"last_sent_time":    p.stats.LastSentTime,
-		"last_error_time":   p.stats.LastErrorTime,
-		"last_error":        p.stats.LastError,
-		"average_latency":   p.stats.AverageLatency,
+		"is_running":      p.isRunning,
+		"brokers":         p.brokers,
+		"topic":           TopicAggregateInfo,
+		"messages_sent":   p.stats.MessagesSent,
+		"messages_error":  p.stats.MessagesError,
+		"bytes_sent":      p.stats.BytesSent,
+		"last_sent_time":  p.stats.LastSentTime,
+		"last_error_time": p.stats.LastErrorTime,
+		"last_error":      p.stats.LastError,
+		"average_latency": p.stats.AverageLatency,
 	}
-	
+
 	if p.writer != nil {
 		writerStats := p.writer.Stats()
 		stats["writer_stats"] = map[string]interface{}{
-			"writes":       writerStats.Writes,
-			"messages":     writerStats.Messages,
-			"bytes":        writerStats.Bytes,
-			"errors":       writerStats.Errors,
-			"batch_time":   writerStats.BatchTime,
-			"batch_queue":  writerStats.BatchQueueTime,
-			"batch_size":   writerStats.BatchSize,
-			"batch_bytes":  writerStats.BatchBytes,
-			"write_time":   writerStats.WriteTime,
-			"wait_time":    writerStats.WaitTime,
-			"retries":      writerStats.Retries,
+			"writes":      writerStats.Writes,
+			"messages":    writerStats.Messages,
+			"bytes":       writerStats.Bytes,
+			"errors":      writerStats.Errors,
+			"batch_time":  writerStats.BatchTime,
+			"batch_queue": writerStats.BatchQueueTime,
+			"batch_size":  writerStats.BatchSize,
+			"batch_bytes": writerStats.BatchBytes,
+			"write_time":  writerStats.WriteTime,
+			"wait_time":   writerStats.WaitTime,
+			"retries":     writerStats.Retries,
 		}
 	}
-	
+
 	return stats
 }
 
@@ -289,26 +295,47 @@ func (p *Producer) GetStats() map[string]interface{} {
 func (p *Producer) Close() error {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	
+
 	if !p.isRunning {
 		return nil // Already closed
 	}
-	
+
 	p.isRunning = false
-	
+
 	if p.writer != nil {
-		if err := p.writer.Close(); err != nil {
-			p.logger.Error("Error closing Kafka writer", map[string]interface{}{
-				"error": err.Error(),
+		p.logger.Info("Attempting to close Kafka writer")
+
+		// Set a timeout for closing the writer
+		done := make(chan error, 1)
+		go func() {
+			p.logger.Debug("Starting Kafka writer close operation")
+			err := p.writer.Close()
+			p.logger.Debug("Kafka writer close operation completed", map[string]interface{}{
+				"error": err,
 			})
-			return err
+			done <- err
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				p.logger.Error("Error closing Kafka writer", map[string]interface{}{
+					"error": err.Error(),
+				})
+				return err
+			}
+			p.logger.Info("Kafka writer closed successfully")
+		case <-time.After(1 * time.Second): // Reduced timeout to 1 second
+			p.logger.Warn("Kafka writer close timed out after 1 second, forcing shutdown")
+			// Continue with cleanup even if close timed out
 		}
+		p.writer = nil
 	}
-	
+
 	p.logger.Info("Kafka producer closed", map[string]interface{}{
 		"final_stats": p.GetStats(),
 	})
-	
+
 	return nil
 }
 

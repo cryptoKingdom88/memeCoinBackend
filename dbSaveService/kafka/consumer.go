@@ -19,6 +19,12 @@ const (
 // StartTokenInfoConsumer starts consuming token info messages and processes them through batch processor
 func StartTokenInfoConsumer(ctx context.Context, broker string, processor *batch.Processor) {
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("❌ Panic in token info consumer: %v", r)
+			}
+		}()
+
 		reader := kafka.NewReader(kafka.ReaderConfig{
 			Brokers:  []string{broker},
 			GroupID:  "token-info-group",
@@ -26,7 +32,15 @@ func StartTokenInfoConsumer(ctx context.Context, broker string, processor *batch
 			MinBytes: 1,
 			MaxBytes: 10e6,
 		})
-		defer reader.Close()
+
+		defer func() {
+			log.Printf("🔄 Closing token info consumer reader")
+			if err := reader.Close(); err != nil {
+				log.Printf("❌ Error closing token info reader: %v", err)
+			} else {
+				log.Printf("✅ Token info consumer reader closed")
+			}
+		}()
 
 		fmt.Printf("🚀 Consumer started for topic: %s\n", TopicTokenInfo)
 
@@ -36,23 +50,28 @@ func StartTokenInfoConsumer(ctx context.Context, broker string, processor *batch
 				log.Printf("🛑 Stopping consumer for topic: %s", TopicTokenInfo)
 				return
 			default:
-				m, err := reader.ReadMessage(context.Background())
+				// Use context for ReadMessage to allow cancellation
+				m, err := reader.ReadMessage(ctx)
 				if err != nil {
+					if err == context.Canceled {
+						log.Printf("🛑 Context cancelled for topic: %s", TopicTokenInfo)
+						return
+					}
 					log.Printf("❌ [%s] Error reading message: %v", TopicTokenInfo, err)
 					continue
 				}
-				
+
 				// Parse JSON message into TokenInfo struct
 				var tokenInfo packet.TokenInfo
 				if err := json.Unmarshal(m.Value, &tokenInfo); err != nil {
-					log.Printf("❌ [%s] Failed to parse JSON message: %v\nMessage: %s", 
+					log.Printf("❌ [%s] Failed to parse JSON message: %v\nMessage: %s",
 						TopicTokenInfo, err, string(m.Value))
 					continue
 				}
-				
+
 				// Add to batch processor
 				processor.AddTokenInfo(tokenInfo)
-				log.Printf("✅ [%s] Token info parsed and added to batch: %s", 
+				log.Printf("✅ [%s] Token info parsed and added to batch: %s",
 					TopicTokenInfo, tokenInfo.Token)
 			}
 		}
@@ -84,18 +103,18 @@ func StartTokenTradeConsumer(ctx context.Context, broker string, processor *batc
 					log.Printf("❌ [%s] Error reading message: %v", TopicTradeInfo, err)
 					continue
 				}
-				
+
 				// Parse JSON message into TokenTradeHistory struct
 				var tradeHistory packet.TokenTradeHistory
 				if err := json.Unmarshal(m.Value, &tradeHistory); err != nil {
-					log.Printf("❌ [%s] Failed to parse JSON message: %v\nMessage: %s", 
+					log.Printf("❌ [%s] Failed to parse JSON message: %v\nMessage: %s",
 						TopicTradeInfo, err, string(m.Value))
 					continue
 				}
-				
+
 				// Add to batch processor
 				processor.AddTokenTradeHistory(tradeHistory)
-				log.Printf("✅ [%s] Trade history parsed and added to batch: %s", 
+				log.Printf("✅ [%s] Trade history parsed and added to batch: %s",
 					TopicTradeInfo, tradeHistory.TxHash)
 			}
 		}

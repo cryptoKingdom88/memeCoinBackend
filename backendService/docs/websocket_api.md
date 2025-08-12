@@ -51,12 +51,14 @@ Once subscribed, you'll receive real-time data messages in the following format:
 ## Message Types
 
 ### Token Information (`token_info`)
-Broadcasted when new token information is available.
+Broadcasted when new token information is available. The `category` field indicates whether it's a newly launched token or a trending token.
 
+#### New Token Launch
 ```json
 {
   "type": "token_info",
   "channel": "dashboard",
+  "category": "new_token",
   "data": {
     "Token": "0x0000000000000000000000000000000000000001",
     "Symbol": "DOGCOI",
@@ -70,8 +72,27 @@ Broadcasted when new token information is available.
 }
 ```
 
+#### Trending Token Entry
+```json
+{
+  "type": "token_info",
+  "channel": "dashboard",
+  "category": "trending_token",
+  "data": {
+    "Token": "0x0000000000000000000000000000000000000002",
+    "Symbol": "HOTCOIN",
+    "Name": "HotCoin",
+    "MetaInfo": "High price movement detected",
+    "TotalSupply": "2000000000",
+    "IsAMM": true,
+    "CreateTime": "2024-01-01T11:50:00Z"
+  },
+  "timestamp": "2024-01-01T12:00:00Z"
+}
+```
+
 ### Trade Data (`trade_data`)
-Broadcasted for each new trade transaction.
+Broadcasted for trade transactions of relevant tokens only (new tokens and trending tokens).
 
 ```json
 {
@@ -90,6 +111,8 @@ Broadcasted for each new trade transaction.
   "timestamp": "2024-01-01T12:00:00Z"
 }
 ```
+
+**Note**: Only trades for tokens in the "new tokens" (latest 30) or "trending tokens" (top 30 by price) lists are broadcasted to optimize bandwidth and client memory usage.
 
 ### Aggregate Data (`aggregate_data`)
 Broadcasted with aggregated trading metrics over time windows.

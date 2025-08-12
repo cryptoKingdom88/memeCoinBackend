@@ -12,6 +12,7 @@ import (
 type WebSocketMessage struct {
 	Type      string      `json:"type"`      // "token_info", "trade_data", "aggregate_data"
 	Channel   string      `json:"channel"`   // "dashboard"
+	Category  string      `json:"category"`  // "new_token", "trending_token", ""
 	Data      interface{} `json:"data"`      // Actual payload
 	Timestamp string      `json:"timestamp"` // ISO 8601 format
 }
@@ -24,11 +25,11 @@ type SubscriptionMessage struct {
 
 // Client represents a WebSocket client connection
 type Client struct {
-	ID       string                 `json:"id"`
-	Conn     *websocket.Conn        `json:"-"`
-	Send     chan []byte            `json:"-"`
-	Channels map[string]bool        `json:"channels"`
-	Hub      *Hub                   `json:"-"`
+	ID       string          `json:"id"`
+	Conn     *websocket.Conn `json:"-"`
+	Send     chan []byte     `json:"-"`
+	Channels map[string]bool `json:"channels"`
+	Hub      *Hub            `json:"-"`
 }
 
 // Hub maintains the set of active clients and broadcasts messages to them
@@ -71,12 +72,34 @@ func NewWebSocketMessage(msgType, channel string, data interface{}) *WebSocketMe
 	return &WebSocketMessage{
 		Type:      msgType,
 		Channel:   channel,
+		Category:  "",
 		Data:      data,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
-// ToJSON converts the WebSocket message to JSON bytes
+// NewWebSocketMessageWithCategory creates a new WebSocket message with category and timestamp
+func NewWebSocketMessageWithCategory(msgType, channel, category string, data interface{}) *WebSocketMessage {
+	return &WebSocketMessage{
+		Type:      msgType,
+		Channel:   channel,
+		Category:  category,
+		Data:      data,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+// ToJSON converts the WebSocket message to JSON bytes with newline separator
 func (msg *WebSocketMessage) ToJSON() ([]byte, error) {
-	return json.Marshal(msg)
+	jsonBytes, err := json.Marshal(msg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add newline separator to prevent message concatenation
+	result := make([]byte, len(jsonBytes)+1)
+	copy(result, jsonBytes)
+	result[len(jsonBytes)] = '\n'
+
+	return result, nil
 }
