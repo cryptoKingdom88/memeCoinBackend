@@ -104,18 +104,28 @@ func StartTokenTradeConsumer(ctx context.Context, broker string, processor *batc
 					continue
 				}
 
-				// Parse JSON message into TokenTradeHistory struct
-				var tradeHistory packet.TokenTradeHistory
-				if err := json.Unmarshal(m.Value, &tradeHistory); err != nil {
-					log.Printf("❌ [%s] Failed to parse JSON message: %v\nMessage: %s",
-						TopicTradeInfo, err, string(m.Value))
-					continue
+				// Parse JSON message into TokenTradeHistory struct (supports both single and array)
+				var trades []packet.TokenTradeHistory
+
+				// Try to parse as single trade first
+				var singleTrade packet.TokenTradeHistory
+				if err := json.Unmarshal(m.Value, &singleTrade); err == nil {
+					trades = []packet.TokenTradeHistory{singleTrade}
+				} else {
+					// Try to parse as array of trades
+					if err := json.Unmarshal(m.Value, &trades); err != nil {
+						log.Printf("❌ [%s] Failed to parse JSON message: %v\nMessage: %s",
+							TopicTradeInfo, err, string(m.Value))
+						continue
+					}
 				}
 
-				// Add to batch processor
-				processor.AddTokenTradeHistory(tradeHistory)
-				log.Printf("✅ [%s] Trade history parsed and added to batch: %s",
-					TopicTradeInfo, tradeHistory.TxHash)
+				// Add all trades to batch processor
+				for _, tradeHistory := range trades {
+					processor.AddTokenTradeHistory(tradeHistory)
+					log.Printf("✅ [%s] Trade history parsed and added to batch: %s",
+						TopicTradeInfo, tradeHistory.TxHash)
+				}
 			}
 		}
 	}()

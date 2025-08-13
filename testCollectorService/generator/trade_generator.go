@@ -122,8 +122,8 @@ func (tg *TradeGenerator) LaunchNewToken() *packet.TokenInfo {
 
 // GenerateBatch generates a batch of random trades for active tokens only
 func (tg *TradeGenerator) GenerateBatch() []packet.TokenTradeHistory {
-	// Generate 3-5 total trades across all active tokens
-	totalTrades := 3 + tg.rand.Intn(20) // 3, 4, or 5 trades total
+	// Generate 100-150 total trades across all active tokens
+	totalTrades := 100 + tg.rand.Intn(51) // 100 to 150 trades total
 
 	if len(tg.activeTokens) == 0 {
 		return []packet.TokenTradeHistory{}

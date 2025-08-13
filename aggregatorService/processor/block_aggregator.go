@@ -105,17 +105,18 @@ func (ba *BlockAggregator) ProcessTrades(ctx context.Context, trades []packet.To
 	tradeGroups := ba.groupTradesByToken(trades)
 	groupDuration := time.Since(groupStartTime)
 
+	log.Printf("⏱️ Grouped %d trades into %d tokens in %v", len(trades), len(tradeGroups), groupDuration)
+
 	// Process each token group with timeout to prevent LAG
 	var wg sync.WaitGroup
 	errorChan := make(chan error, len(tradeGroups))
 	processingStartTime := time.Now()
 
-	for tokenAddress, tokenTrades := range tradeGroups {
+	for tokenAddress, tokenSummary := range tradeGroups {
 		wg.Add(1)
 
 		// Try to submit to worker pool with timeout
-		submitted := make(chan bool, 1)
-		go func(addr string, trades []packet.TokenTradeHistory) {
+		go func(addr string, summary *TokenSummary) {
 			defer func() {
 				if r := recover(); r != nil {
 					log.Printf("Panic in token processing: %v", r)
@@ -125,20 +126,19 @@ func (ba *BlockAggregator) ProcessTrades(ctx context.Context, trades []packet.To
 
 			// Try to submit to worker pool
 			err := ba.workerPool.Submit(func() {
-				if err := ba.processTokenTrades(ctx, addr, trades); err != nil {
-					errorChan <- fmt.Errorf("failed to process trades for token %s: %w", addr, err)
+				if err := ba.processTokenSummary(ctx, summary); err != nil {
+					errorChan <- fmt.Errorf("failed to process token summary for %s: %w", addr, err)
 				}
 			})
 
 			if err != nil {
 				// If worker pool is full, process directly to avoid LAG
 				log.Printf("WorkerPool full, processing token %s directly", addr)
-				if err := ba.processTokenTrades(ctx, addr, trades); err != nil {
-					errorChan <- fmt.Errorf("failed to process trades for token %s: %w", addr, err)
+				if err := ba.processTokenSummary(ctx, summary); err != nil {
+					errorChan <- fmt.Errorf("failed to process token summary for %s: %w", addr, err)
 				}
 			}
-			submitted <- true
-		}(tokenAddress, tokenTrades)
+		}(tokenAddress, tokenSummary)
 
 		// Don't wait for submission to complete - continue with next token
 	}
@@ -284,9 +284,25 @@ func (ba *BlockAggregator) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// groupTradesByToken groups trades by token address for efficient processing
-func (ba *BlockAggregator) groupTradesByToken(trades []packet.TokenTradeHistory) map[string][]packet.TokenTradeHistory {
-	groups := make(map[string][]packet.TokenTradeHistory)
+// TokenSummary holds pre-aggregated data for a token
+type TokenSummary struct {
+	TokenAddress    string
+	TradeCount      int
+	BuyCount        int
+	SellCount       int
+	TotalVolume     float64
+	BuyVolume       float64
+	SellVolume      float64
+	OpenPrice       float64
+	ClosePrice      float64
+	FirstTrade      packet.TokenTradeHistory
+	LastTrade       packet.TokenTradeHistory
+	ConvertedTrades []models.TradeData // Pre-converted trades for efficient processing
+}
+
+// groupTradesByToken groups trades by token address and pre-aggregates summary data
+func (ba *BlockAggregator) groupTradesByToken(trades []packet.TokenTradeHistory) map[string]*TokenSummary {
+	groups := make(map[string]*TokenSummary)
 
 	for _, trade := range trades {
 		tokenAddress := trade.Token
@@ -295,37 +311,103 @@ func (ba *BlockAggregator) groupTradesByToken(trades []packet.TokenTradeHistory)
 			continue
 		}
 
-		groups[tokenAddress] = append(groups[tokenAddress], trade)
+		// Get or create token summary
+		summary, exists := groups[tokenAddress]
+		if !exists {
+			summary = &TokenSummary{
+				TokenAddress:    tokenAddress,
+				ConvertedTrades: make([]models.TradeData, 0),
+			}
+			groups[tokenAddress] = summary
+		}
+
+		// Convert trade data immediately during grouping
+		var convertedTrade models.TradeData
+		if err := convertedTrade.FromTokenTradeHistory(trade); err != nil {
+			log.Printf("Warning: failed to convert trade during grouping for token %s: %v", tokenAddress, err)
+			continue // Skip invalid trades
+		}
+
+		// Use converted data for aggregation (more efficient)
+		priceUsd := convertedTrade.PriceUsd
+		nativeAmount := convertedTrade.NativeAmount
+
+		// Update counters
+		summary.TradeCount++
+		if convertedTrade.SellBuy == "buy" {
+			summary.BuyCount++
+			summary.BuyVolume += nativeAmount
+		} else {
+			summary.SellCount++
+			summary.SellVolume += nativeAmount
+		}
+		summary.TotalVolume += nativeAmount
+
+		// Update open/close prices (first/last trade)
+		if summary.TradeCount == 1 {
+			// First trade
+			summary.OpenPrice = priceUsd
+			summary.FirstTrade = trade
+		}
+		summary.ClosePrice = priceUsd // Always update to latest (last trade)
+		summary.LastTrade = trade
+
+		// Store pre-converted trade for efficient processing
+		summary.ConvertedTrades = append(summary.ConvertedTrades, convertedTrade)
 	}
 
 	return groups
 }
 
-// processTokenTrades processes all trades for a specific token
-func (ba *BlockAggregator) processTokenTrades(ctx context.Context, tokenAddress string, trades []packet.TokenTradeHistory) error {
+// processTokenTrades processes pre-aggregated token summary
+func (ba *BlockAggregator) processTokenSummary(ctx context.Context, summary *TokenSummary) error {
 	// Get or create processor for this token
-	processor, err := ba.getOrCreateProcessor(tokenAddress)
+	processor, err := ba.getOrCreateProcessor(summary.TokenAddress)
 	if err != nil {
-		return fmt.Errorf("failed to get processor for token %s: %w", tokenAddress, err)
+		return fmt.Errorf("failed to get processor for token %s: %w", summary.TokenAddress, err)
 	}
 
-	// Convert and process each trade
+	log.Printf("🔄 Processing token %s: %d trades (Buy: %d, Sell: %d, Volume: %.2f, Open: %.6f, Close: %.6f)",
+		summary.TokenAddress, summary.TradeCount, summary.BuyCount, summary.SellCount,
+		summary.TotalVolume, summary.OpenPrice, summary.ClosePrice)
+
+	// Process pre-converted trades (no conversion overhead!)
+	for _, tradeData := range summary.ConvertedTrades {
+		// Process the already-converted trade
+		if err := processor.ProcessTrade(ctx, tradeData); err != nil {
+			log.Printf("Warning: failed to process trade for token %s: %v", summary.TokenAddress, err)
+			continue
+		}
+	}
+
+	// TODO: Option 2: Process aggregated summary directly (future optimization)
+	// This would require extending TokenProcessor to accept pre-aggregated data
+	// processor.ProcessTokenSummary(ctx, summary)
+
+	return nil
+}
+
+// processTokenTrades processes all trades for a specific token (legacy method)
+func (ba *BlockAggregator) processTokenTrades(ctx context.Context, tokenAddress string, trades []packet.TokenTradeHistory) error {
+	// Convert trades for backward compatibility
+	convertedTrades := make([]models.TradeData, 0, len(trades))
 	for _, trade := range trades {
-		// Convert from packet format to internal format
 		var tradeData models.TradeData
 		if err := tradeData.FromTokenTradeHistory(trade); err != nil {
 			log.Printf("Warning: failed to convert trade for token %s: %v", tokenAddress, err)
 			continue
 		}
-
-		// Process the trade
-		if err := processor.ProcessTrade(ctx, tradeData); err != nil {
-			log.Printf("Warning: failed to process trade for token %s: %v", tokenAddress, err)
-			continue
-		}
+		convertedTrades = append(convertedTrades, tradeData)
 	}
 
-	return nil
+	// Create summary for backward compatibility
+	summary := &TokenSummary{
+		TokenAddress:    tokenAddress,
+		ConvertedTrades: convertedTrades,
+		TradeCount:      len(convertedTrades),
+	}
+
+	return ba.processTokenSummary(ctx, summary)
 }
 
 // getOrCreateProcessor gets an existing processor or creates a new one

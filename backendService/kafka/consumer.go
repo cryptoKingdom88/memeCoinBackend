@@ -455,54 +455,65 @@ func (c *Consumer) handleTokenInfo(message kafka.Message) {
 	log.Printf("Broadcasted new token info: %s (%s)", tokenInfo.Name, tokenInfo.Symbol)
 }
 
-// handleTradeInfo processes trade-info messages
+// handleTradeInfo processes trade-info messages (supports both single trade and array)
 func (c *Consumer) handleTradeInfo(message kafka.Message) {
-	var tradeInfo packet.TokenTradeHistory
-	if err := json.Unmarshal(message.Value, &tradeInfo); err != nil {
-		log.Printf("Error unmarshaling trade info: %v", err)
-		return
+	var trades []packet.TokenTradeHistory
+
+	// Try to parse as single trade first
+	var singleTrade packet.TokenTradeHistory
+	if err := json.Unmarshal(message.Value, &singleTrade); err == nil {
+		trades = []packet.TokenTradeHistory{singleTrade}
+	} else {
+		// Try to parse as array of trades
+		if err := json.Unmarshal(message.Value, &trades); err != nil {
+			log.Printf("Error unmarshaling trade info: %v", err)
+			return
+		}
 	}
 
 	if c.tokenManager == nil {
 		return
 	}
 
-	// 1. Check if this token can be a trending candidate
-	if c.tokenManager.IsTrendingCandidate(tradeInfo.Token, tradeInfo.PriceUsd) {
-		// 2. Get token info (Redis -> DB fallback)
-		tokenInfo := c.tokenManager.GetTokenInfo(tradeInfo.Token)
-		if tokenInfo != nil {
-			// 3. Update trending tokens list
-			if c.tokenManager.UpdateTrendingToken(*tokenInfo, tradeInfo) {
-				// 4. Send token info as trending token (newly added)
-				wsMessage := models.NewWebSocketMessageWithCategory("token_info", "dashboard", "trending_token", *tokenInfo)
+	// Process each trade in the array
+	for _, tradeInfo := range trades {
+		// 1. Check if this token can be a trending candidate
+		if c.tokenManager.IsTrendingCandidate(tradeInfo.Token, tradeInfo.PriceUsd) {
+			// 2. Get token info (Redis -> DB fallback)
+			tokenInfo := c.tokenManager.GetTokenInfo(tradeInfo.Token)
+			if tokenInfo != nil {
+				// 3. Update trending tokens list
+				if c.tokenManager.UpdateTrendingToken(*tokenInfo, tradeInfo) {
+					// 4. Send token info as trending token (newly added)
+					wsMessage := models.NewWebSocketMessageWithCategory("token_info", "dashboard", "trending_token", *tokenInfo)
 
-				jsonData, err := wsMessage.ToJSON()
-				if err != nil {
-					log.Printf("Error converting trending token info to JSON: %v", err)
-				} else {
-					c.hubManager.BroadcastToChannel("dashboard", jsonData)
-					log.Printf("Broadcasted trending token info: %s (%s)", tokenInfo.Name, tokenInfo.Symbol)
+					jsonData, err := wsMessage.ToJSON()
+					if err != nil {
+						log.Printf("Error converting trending token info to JSON: %v", err)
+					} else {
+						c.hubManager.BroadcastToChannel("dashboard", jsonData)
+						log.Printf("Broadcasted trending token info: %s (%s)", tokenInfo.Name, tokenInfo.Symbol)
 
-					// Add small delay to prevent message concatenation
-					time.Sleep(10 * time.Millisecond)
+						// Add small delay to prevent message concatenation
+						time.Sleep(10 * time.Millisecond)
+					}
 				}
 			}
 		}
-	}
 
-	// 5. Check if this trade is for a relevant token (new 30 or trending 30)
-	if c.tokenManager.IsRelevantToken(tradeInfo.Token) {
-		wsMessage := models.NewWebSocketMessage("trade_data", "dashboard", tradeInfo)
+		// 5. Check if this trade is for a relevant token (new 30 or trending 30)
+		if c.tokenManager.IsRelevantToken(tradeInfo.Token) {
+			wsMessage := models.NewWebSocketMessage("trade_data", "dashboard", tradeInfo)
 
-		jsonData, err := wsMessage.ToJSON()
-		if err != nil {
-			log.Printf("Error converting trade data to JSON: %v", err)
-			return
+			jsonData, err := wsMessage.ToJSON()
+			if err != nil {
+				log.Printf("Error converting trade data to JSON: %v", err)
+				continue
+			}
+
+			c.hubManager.BroadcastToChannel("dashboard", jsonData)
+			log.Printf("Broadcasted trade data for relevant token: %s", tradeInfo.Token)
 		}
-
-		c.hubManager.BroadcastToChannel("dashboard", jsonData)
-		log.Printf("Broadcasted trade data for relevant token: %s", tradeInfo.Token)
 	}
 }
 
