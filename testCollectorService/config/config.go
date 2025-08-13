@@ -9,27 +9,27 @@ import (
 // Config holds configuration for the test collector service
 type Config struct {
 	// Kafka configuration
-	KafkaBrokers []string
-	KafkaTopic   string
+	KafkaBrokers   []string
+	KafkaTopic     string
 	TokenInfoTopic string // Topic for token launch events
-	
+
 	// Test configuration
-	TokenCount       int           // Number of tokens to simulate
-	TradesPerToken   int           // Base number of trades per token per batch
-	TradeVariation   int           // Random variation in trades per token
-	BatchInterval    time.Duration // Interval between batches
-	TestDuration     time.Duration // How long to run the test
-	
+	TokenCount     int           // Number of tokens to simulate
+	TradesPerToken int           // Base number of trades per token per batch
+	TradeVariation int           // Random variation in trades per token
+	BatchInterval  time.Duration // Interval between batches
+	TestDuration   time.Duration // How long to run the test
+
 	// Token launch configuration
 	TokenLaunchInterval time.Duration // Interval between token launches
 	InitialTokens       int           // Number of tokens to launch initially
-	
+
 	// Trade simulation parameters
-	MinPrice         float64 // Minimum token price
-	MaxPrice         float64 // Maximum token price
-	MinAmount        float64 // Minimum trade amount
-	MaxAmount        float64 // Maximum trade amount
-	BuyProbability   float64 // Probability of buy vs sell (0.0-1.0)
+	MinPrice       float64 // Minimum token price
+	MaxPrice       float64 // Maximum token price
+	MinAmount      float64 // Minimum trade amount
+	MaxAmount      float64 // Maximum trade amount
+	BuyProbability float64 // Probability of buy vs sell (0.0-1.0)
 }
 
 // LoadConfig loads configuration from environment variables
@@ -39,8 +39,8 @@ func LoadConfig() *Config {
 		KafkaTopic:          getEnv("KAFKA_TOPIC", "trade-info"),
 		TokenInfoTopic:      getEnv("TOKEN_INFO_TOPIC", "token-info"),
 		TokenCount:          getEnvInt("TOKEN_COUNT", 20),
-		TradesPerToken:      getEnvInt("TRADES_PER_TOKEN", 15), // Base 15 trades per token
-		TradeVariation:      getEnvInt("TRADE_VARIATION", 10),  // ±10 variation (5-25 trades)
+		TradesPerToken:      getEnvInt("TRADES_PER_TOKEN", 0), // Base 0 trades per token (will use total batch logic)
+		TradeVariation:      getEnvInt("TRADE_VARIATION", 0),  // No variation
 		BatchInterval:       getEnvDuration("BATCH_INTERVAL", 200*time.Millisecond),
 		TestDuration:        getEnvDuration("TEST_DURATION", 5*time.Minute),
 		TokenLaunchInterval: getEnvDuration("TOKEN_LAUNCH_INTERVAL", 10*time.Second),
@@ -92,7 +92,7 @@ func parseStringSlice(value string) []string {
 	if value == "" {
 		return []string{}
 	}
-	
+
 	result := []string{}
 	for _, broker := range []string{value} {
 		if broker != "" {

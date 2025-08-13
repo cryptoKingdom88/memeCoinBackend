@@ -80,3 +80,21 @@ func ProduceTradeInfo(tradeInfo message.TokenTradeHistory) {
 	// Send to Kafka
 	SendKafkaMessage(TopicTradeInfo, tradeInfoBytes)
 }
+
+// ProduceBatchTradeInfo sends multiple trades as a single message
+func ProduceBatchTradeInfo(tradeInfos []message.TokenTradeHistory) {
+	if len(tradeInfos) == 0 {
+		return
+	}
+
+	// Convert slice to JSON
+	tradeInfosBytes, err := json.Marshal(tradeInfos)
+	if err != nil {
+		log.Printf("Failed to marshal batch TradeInfo: %v", err)
+		return
+	}
+
+	// Send to Kafka
+	SendKafkaMessage(TopicTradeInfo, tradeInfosBytes)
+	log.Printf("✅ Sent batch of %d trades to Kafka", len(tradeInfos))
+}

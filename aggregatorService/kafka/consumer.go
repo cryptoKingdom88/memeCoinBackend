@@ -53,21 +53,15 @@ func (c *Consumer) Initialize(brokers []string, topic, consumerGroup string) err
 	c.topic = topic
 	c.consumerGroup = consumerGroup
 
-	// Create Kafka reader with high-throughput configuration
+	// Create Kafka reader with immediate processing configuration
 	c.reader = kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
 		Topic:          topic,
 		GroupID:        consumerGroup,
-		MinBytes:       100e3,            // 100KB minimum for better batching
+		MinBytes:       1,                // Process immediately
 		MaxBytes:       10e6,             // Maximum bytes to read (10MB)
-		CommitInterval: 5 * time.Second,  // Less frequent commits for better performance
+		CommitInterval: 1 * time.Second,  // Frequent commits for immediate processing
 		StartOffset:    kafka.LastOffset, // Start from latest offset
-		ErrorLogger: kafka.LoggerFunc(func(msg string, args ...interface{}) {
-			log.Printf("Kafka error: "+msg, args...)
-		}),
-		Logger: kafka.LoggerFunc(func(msg string, args ...interface{}) {
-			log.Printf("Kafka info: "+msg, args...)
-		}),
 	})
 
 	log.Printf("Kafka consumer initialized - brokers: %v, topic: %s, group: %s", brokers, topic, consumerGroup)
@@ -155,169 +149,57 @@ func (c *Consumer) StopWithTimeout(timeout time.Duration) error {
 	return nil
 }
 
-// consumeMessages is the main message consumption loop with batching support
+// consumeMessages is the main message consumption loop - immediate processing
 func (c *Consumer) consumeMessages(ctx context.Context, processor interfaces.BlockAggregator) {
-	log.Printf("Starting message consumption loop with batching")
-
-	// Batching configuration - Optimized for high throughput
-	const (
-		maxBatchSize = 500                    // Increased for better throughput
-		batchTimeout = 200 * time.Millisecond // Increased timeout for larger batches
-	)
-
-	messageBatch := make([]kafka.Message, 0, maxBatchSize)
-	batchTimer := time.NewTimer(batchTimeout)
-	batchTimer.Stop() // Stop initial timer
-
-	defer func() {
-		// Process any remaining messages in batch before shutdown
-		if len(messageBatch) > 0 {
-			log.Printf("Processing final batch of %d messages before shutdown", len(messageBatch))
-			c.processBatch(ctx, messageBatch, processor)
-		}
-		batchTimer.Stop()
-	}()
-
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("Context cancelled, stopping message consumption")
 			return
 		case <-c.stopChan:
-			log.Printf("Stop signal received, stopping message consumption")
 			return
-		case <-batchTimer.C:
-			// Batch timeout - process accumulated messages
-			if len(messageBatch) > 0 {
-				c.processBatch(ctx, messageBatch, processor)
-				messageBatch = messageBatch[:0] // Reset batch
-			}
 		default:
-			// Try to read message with short timeout to allow batching
-			readCtx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
-			message, err := c.reader.FetchMessage(readCtx)
-			cancel()
-
+			// Read message immediately without batching
+			message, err := c.reader.ReadMessage(ctx)
 			if err != nil {
-				if err == context.Canceled || err == context.DeadlineExceeded {
-					// Timeout or cancellation - check if we have batch to process
-					if len(messageBatch) > 0 {
-						c.processBatch(ctx, messageBatch, processor)
-						messageBatch = messageBatch[:0] // Reset batch
-					}
-
-					// If context was cancelled, exit
-					if ctx.Err() != nil {
-						log.Printf("Context cancelled during message fetch")
-						return
-					}
-					continue
+				if err == context.Canceled {
+					return
 				}
-				log.Printf("Error fetching message: %v", err)
 				// Add backoff to prevent tight error loop
 				time.Sleep(time.Second)
 				continue
 			}
 
-			// Add message to batch
-			messageBatch = append(messageBatch, message)
-
-			// Start batch timer if this is the first message in batch
-			if len(messageBatch) == 1 {
-				batchTimer.Reset(batchTimeout)
-			}
-
-			// Process batch if it's full
-			if len(messageBatch) >= maxBatchSize {
-				batchTimer.Stop()
-				c.processBatch(ctx, messageBatch, processor)
-				messageBatch = messageBatch[:0] // Reset batch
-			}
+			// Process message immediately
+			c.processMessage(ctx, message, processor)
 		}
 	}
 }
 
-// processBatch processes a batch of Kafka messages for improved performance
-func (c *Consumer) processBatch(ctx context.Context, messages []kafka.Message, processor interfaces.BlockAggregator) {
-	if len(messages) == 0 {
-		return
-	}
-
-	startTime := time.Now()
-	var allTrades []packet.TokenTradeHistory
-	var messagesToCommit []kafka.Message
-
-	// Parse all messages in the batch
-	for _, message := range messages {
-		trades, err := c.parseTradeMessage(message.Value)
-		if err != nil {
-			log.Printf("Error parsing trade message: %v", err)
-			// Skip this message but continue with others
-			continue
-		}
-
-		if len(trades) > 0 {
-			allTrades = append(allTrades, trades...)
-			messagesToCommit = append(messagesToCommit, message)
-		}
-	}
-
-	if len(allTrades) == 0 {
-		log.Printf("Warning: no valid trades found in batch of %d messages", len(messages))
-		return
-	}
-
-	// Process all trades together
-	if err := processor.ProcessTrades(ctx, allTrades); err != nil {
-		log.Printf("Error processing batch of %d trades: %v", len(allTrades), err)
-		// Don't commit messages if processing failed
-		return
-	}
-
-	// Commit all messages in the batch
-	if err := c.reader.CommitMessages(ctx, messagesToCommit...); err != nil {
-		log.Printf("Error committing batch of %d messages: %v", len(messagesToCommit), err)
-		// Continue processing even if commit fails
-	}
-
-	processingTime := time.Since(startTime)
-	log.Printf("Processed batch: %d messages, %d trades in %v", len(messages), len(allTrades), processingTime)
-
-	// Log performance warning if batch processing takes too long
-	if processingTime > 200*time.Millisecond {
-		log.Printf("Warning: slow batch processing detected - %v for %d trades", processingTime, len(allTrades))
-	}
-}
-
-// processMessage processes a single Kafka message (kept for backward compatibility)
-func (c *Consumer) processMessage(ctx context.Context, message kafka.Message, processor interfaces.BlockAggregator) error {
-	startTime := time.Now()
-
+// processMessage processes a single Kafka message immediately
+func (c *Consumer) processMessage(ctx context.Context, message kafka.Message, processor interfaces.BlockAggregator) {
 	// Parse JSON message into trade data
 	trades, err := c.parseTradeMessage(message.Value)
 	if err != nil {
-		return fmt.Errorf("failed to parse trade message: %w", err)
+		return // Skip invalid messages silently
 	}
 
 	if len(trades) == 0 {
-		log.Printf("Warning: received empty trade list in message")
-		return nil
+		return
 	}
+
+	// 🎯 CORE LOG: Show received trade count immediately
+	log.Printf("📥 Received %d trades from Kafka", len(trades))
 
 	// Process trades through block aggregator
 	if err := processor.ProcessTrades(ctx, trades); err != nil {
-		return fmt.Errorf("failed to process trades: %w", err)
+		log.Printf("❌ Error processing %d trades: %v", len(trades), err)
+		return
 	}
 
-	processingTime := time.Since(startTime)
-	log.Printf("Processed %d trades in %v", len(trades), processingTime)
-
-	// Log performance warning if processing takes too long
-	if processingTime > 100*time.Millisecond {
-		log.Printf("Warning: slow trade processing detected - %v for %d trades", processingTime, len(trades))
+	// Commit message after successful processing
+	if err := c.reader.CommitMessages(ctx, message); err != nil {
+		log.Printf("❌ Error committing message: %v", err)
 	}
-
-	return nil
 }
 
 // parseTradeMessage parses JSON message into trade data

@@ -105,31 +105,59 @@ func (ba *BlockAggregator) ProcessTrades(ctx context.Context, trades []packet.To
 	tradeGroups := ba.groupTradesByToken(trades)
 	groupDuration := time.Since(groupStartTime)
 
-	// Process each token group
+	// Process each token group with timeout to prevent LAG
 	var wg sync.WaitGroup
 	errorChan := make(chan error, len(tradeGroups))
+	processingStartTime := time.Now()
 
 	for tokenAddress, tokenTrades := range tradeGroups {
 		wg.Add(1)
 
-		// Submit processing job to worker pool
-		err := ba.workerPool.Submit(func() {
-			defer wg.Done()
+		// Try to submit to worker pool with timeout
+		submitted := make(chan bool, 1)
+		go func(addr string, trades []packet.TokenTradeHistory) {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Panic in token processing: %v", r)
+				}
+				wg.Done()
+			}()
 
-			if err := ba.processTokenTrades(ctx, tokenAddress, tokenTrades); err != nil {
-				errorChan <- fmt.Errorf("failed to process trades for token %s: %w", tokenAddress, err)
+			// Try to submit to worker pool
+			err := ba.workerPool.Submit(func() {
+				if err := ba.processTokenTrades(ctx, addr, trades); err != nil {
+					errorChan <- fmt.Errorf("failed to process trades for token %s: %w", addr, err)
+				}
+			})
+
+			if err != nil {
+				// If worker pool is full, process directly to avoid LAG
+				log.Printf("WorkerPool full, processing token %s directly", addr)
+				if err := ba.processTokenTrades(ctx, addr, trades); err != nil {
+					errorChan <- fmt.Errorf("failed to process trades for token %s: %w", addr, err)
+				}
 			}
-		})
+			submitted <- true
+		}(tokenAddress, tokenTrades)
 
-		if err != nil {
-			wg.Done()
-			errorChan <- fmt.Errorf("failed to submit job to worker pool: %w", err)
-		}
+		// Don't wait for submission to complete - continue with next token
 	}
 
-	// Wait for all processing to complete
-	processingStartTime := time.Now()
-	wg.Wait()
+	// Wait for all processing to complete with timeout
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// All processing completed
+	case <-time.After(5 * time.Second):
+		log.Printf("Warning: Trade processing timed out after 5 seconds")
+		// Continue anyway to prevent LAG
+	}
+
 	processingDuration := time.Since(processingStartTime)
 	close(errorChan)
 

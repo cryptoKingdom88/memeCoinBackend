@@ -42,23 +42,23 @@ type Config struct {
 	LogLevel string `json:"log_level"`
 
 	// Performance tuning configuration
-	RedisMaxRetries       int           `json:"redis_max_retries"`
-	RedisRetryDelay       time.Duration `json:"redis_retry_delay"`
-	RedisPipelineSize     int           `json:"redis_pipeline_size"`
-	RedisReadTimeout      time.Duration `json:"redis_read_timeout"`
-	RedisWriteTimeout     time.Duration `json:"redis_write_timeout"`
-	RedisIdleTimeout      time.Duration `json:"redis_idle_timeout"`
-	RedisMaxConnAge       time.Duration `json:"redis_max_conn_age"`
-	
+	RedisMaxRetries   int           `json:"redis_max_retries"`
+	RedisRetryDelay   time.Duration `json:"redis_retry_delay"`
+	RedisPipelineSize int           `json:"redis_pipeline_size"`
+	RedisReadTimeout  time.Duration `json:"redis_read_timeout"`
+	RedisWriteTimeout time.Duration `json:"redis_write_timeout"`
+	RedisIdleTimeout  time.Duration `json:"redis_idle_timeout"`
+	RedisMaxConnAge   time.Duration `json:"redis_max_conn_age"`
+
 	// Memory optimization
-	GCTargetPercentage    int           `json:"gc_target_percentage"`
-	MemoryLimitMB         int           `json:"memory_limit_mb"`
-	TradeBufferSize       int           `json:"trade_buffer_size"`
-	
+	GCTargetPercentage int `json:"gc_target_percentage"`
+	MemoryLimitMB      int `json:"memory_limit_mb"`
+	TradeBufferSize    int `json:"trade_buffer_size"`
+
 	// Concurrency tuning
-	ProcessorChannelSize  int           `json:"processor_channel_size"`
-	WorkerQueueSize       int           `json:"worker_queue_size"`
-	BatchProcessingSize   int           `json:"batch_processing_size"`
+	ProcessorChannelSize int `json:"processor_channel_size"`
+	WorkerQueueSize      int `json:"worker_queue_size"`
+	BatchProcessingSize  int `json:"batch_processing_size"`
 
 	// Internal fields for runtime updates
 	mu sync.RWMutex `json:"-"`
@@ -123,29 +123,29 @@ func (cm *ConfigManager) LoadConfig() (*Config, error) {
 
 		// Default metrics settings
 		MetricsEnabled: getEnvBool("METRICS_ENABLED", true),
-		MetricsPort:    getEnvInt("METRICS_PORT", 8080),
+		MetricsPort:    getEnvInt("METRICS_PORT", 8081), // Changed from 8080 to 8081
 
 		// Default logging settings
 		LogLevel: getEnv("LOG_LEVEL", "INFO"),
 
 		// Default performance tuning settings
-		RedisMaxRetries:       getEnvInt("REDIS_MAX_RETRIES", 3),
-		RedisRetryDelay:       getEnvDuration("REDIS_RETRY_DELAY", 100*time.Millisecond),
-		RedisPipelineSize:     getEnvInt("REDIS_PIPELINE_SIZE", 100),
-		RedisReadTimeout:      getEnvDuration("REDIS_READ_TIMEOUT", 3*time.Second),
-		RedisWriteTimeout:     getEnvDuration("REDIS_WRITE_TIMEOUT", 3*time.Second),
-		RedisIdleTimeout:      getEnvDuration("REDIS_IDLE_TIMEOUT", 5*time.Minute),
-		RedisMaxConnAge:       getEnvDuration("REDIS_MAX_CONN_AGE", 30*time.Minute),
-		
+		RedisMaxRetries:   getEnvInt("REDIS_MAX_RETRIES", 3),
+		RedisRetryDelay:   getEnvDuration("REDIS_RETRY_DELAY", 100*time.Millisecond),
+		RedisPipelineSize: getEnvInt("REDIS_PIPELINE_SIZE", 100),
+		RedisReadTimeout:  getEnvDuration("REDIS_READ_TIMEOUT", 3*time.Second),
+		RedisWriteTimeout: getEnvDuration("REDIS_WRITE_TIMEOUT", 3*time.Second),
+		RedisIdleTimeout:  getEnvDuration("REDIS_IDLE_TIMEOUT", 5*time.Minute),
+		RedisMaxConnAge:   getEnvDuration("REDIS_MAX_CONN_AGE", 30*time.Minute),
+
 		// Default memory optimization settings
-		GCTargetPercentage:    getEnvInt("GC_TARGET_PERCENTAGE", 100),
-		MemoryLimitMB:         getEnvInt("MEMORY_LIMIT_MB", 512),
-		TradeBufferSize:       getEnvInt("TRADE_BUFFER_SIZE", 1000),
-		
+		GCTargetPercentage: getEnvInt("GC_TARGET_PERCENTAGE", 100),
+		MemoryLimitMB:      getEnvInt("MEMORY_LIMIT_MB", 512),
+		TradeBufferSize:    getEnvInt("TRADE_BUFFER_SIZE", 1000),
+
 		// Default concurrency tuning settings
-		ProcessorChannelSize:  getEnvInt("PROCESSOR_CHANNEL_SIZE", 1000),
-		WorkerQueueSize:       getEnvInt("WORKER_QUEUE_SIZE", 10000),
-		BatchProcessingSize:   getEnvInt("BATCH_PROCESSING_SIZE", 100),
+		ProcessorChannelSize: getEnvInt("PROCESSOR_CHANNEL_SIZE", 1000),
+		WorkerQueueSize:      getEnvInt("WORKER_QUEUE_SIZE", 10000),
+		BatchProcessingSize:  getEnvInt("BATCH_PROCESSING_SIZE", 100),
 	}
 
 	// Validate configuration

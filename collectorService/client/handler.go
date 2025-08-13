@@ -17,6 +17,9 @@ func NewTokenHandler(msg []byte) {
 		return
 	}
 
+	// Collect all token infos from this block
+	var tokenInfos []packet.TokenInfo
+
 	// Convert to TokenInfo struct for Kafka transfer
 	for _, tokenUpdate := range result.Solana.TokenSupplyUpdates {
 		tokenInfo := packet.TokenInfo{
@@ -29,16 +32,21 @@ func NewTokenHandler(msg []byte) {
 			CreateTime:  tokenUpdate.Block.Time,
 		}
 
-		if (tokenInfo.Symbol == "" || tokenInfo.Name == "") {
+		if tokenInfo.Symbol == "" || tokenInfo.Name == "" {
 			log.Printf("TokenInfo Symbol or Name is empty, skipping...")
 			continue
 		}
 
-		// Log the converted struct
-		log.Printf("[NewToken Created] %+v", tokenInfo)
-		
-		// Send tokenInfo to Kafka producer
-		kafka.ProduceTokenInfo(tokenInfo)
+		tokenInfos = append(tokenInfos, tokenInfo)
+	}
+
+	if len(tokenInfos) > 0 {
+		log.Printf("📦 Block contains %d new tokens", len(tokenInfos))
+		// Send token infos individually (not as batch)
+		for _, tokenInfo := range tokenInfos {
+			log.Printf("[NewToken Created] %+v", tokenInfo)
+			kafka.ProduceTokenInfo(tokenInfo)
+		}
 	}
 }
 
@@ -49,10 +57,15 @@ func TokenTradeHandler(msg []byte) {
 		return
 	}
 
+	// Collect all trades from this block
+	var blockTrades []packet.TokenTradeHistory
+
 	// make data to transfer by kafka
 	for _, trade := range result.Solana.DEXTrades {
+		var tokenTrade packet.TokenTradeHistory
+
 		if trade.Trade.Buy.Currency.Native || trade.Trade.Buy.Currency.Wrapped {
-			tokenTrade := packet.TokenTradeHistory{
+			tokenTrade = packet.TokenTradeHistory{
 				Token:        trade.Trade.Sell.Currency.MintAddress,
 				Wallet:       trade.Trade.Buy.Account.Owner,
 				SellBuy:      trade.Instruction.Program.Method,
@@ -62,13 +75,8 @@ func TokenTradeHandler(msg []byte) {
 				TransTime:    trade.Block.Time,
 				TxHash:       trade.Transaction.Signature,
 			}
-
-			log.Printf("[Token Trade Info] %+v", tokenTrade)
-			
-			// Send to Kafka producer
-			kafka.ProduceTradeInfo(tokenTrade)
 		} else {
-			tokenTrade := packet.TokenTradeHistory{
+			tokenTrade = packet.TokenTradeHistory{
 				Token:        trade.Trade.Buy.Currency.MintAddress,
 				Wallet:       trade.Trade.Buy.Account.Owner,
 				SellBuy:      trade.Instruction.Program.Method,
@@ -78,11 +86,14 @@ func TokenTradeHandler(msg []byte) {
 				TransTime:    trade.Block.Time,
 				TxHash:       trade.Transaction.Signature,
 			}
-
-			log.Printf("[Token Trade Info] %+v", tokenTrade)
-			
-			// Send to Kafka producer
-			kafka.ProduceTradeInfo(tokenTrade)
 		}
+
+		blockTrades = append(blockTrades, tokenTrade)
+	}
+
+	if len(blockTrades) > 0 {
+		log.Printf("📦 Block contains %d trades", len(blockTrades))
+		// Send all trades from this block at once
+		kafka.ProduceBatchTradeInfo(blockTrades)
 	}
 }

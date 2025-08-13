@@ -746,7 +746,7 @@ func (tp *TokenProcessor) sendAggregatesToKafka(ctx context.Context) error {
 		return fmt.Errorf("failed to send aggregate data: %w", err)
 	}
 
-	log.Printf("Sent aggregates to Kafka for token %s", tp.tokenAddress)
+	//log.Printf("Sent aggregates to Kafka for token %s", tp.tokenAddress)
 	return nil
 }
 
